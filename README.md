@@ -13,11 +13,13 @@ npm run dev
 ## Install The Desktop Bridge
 
 ```sh
-npm create vlix
+npm create vlix@latest
 ```
 
-The bridge opens a local console, connects to the desktop agent session store,
-and creates account-scoped QR links for phone pairing.
+The base installer opens a local console. For cloud phone/web access, sign into
+the hosted Vlix app and copy the generated `VLIX_BRIDGE_SETUP='...' npm create
+vlix@latest` command. That binds the desktop bridge to the user's Supabase account
+so phones do not need to be on the same Wi-Fi network.
 
 ## Supabase
 

@@ -3,7 +3,7 @@
 Run the Vlix desktop bridge installer:
 
 ```sh
-npm create vlix
+npm create vlix@latest
 ```
 
 This package forwards to `vlix-install`.

@@ -30,7 +30,10 @@ export const Route = createRootRoute({
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Vlix" },
-      { name: "description", content: "Command your local AI agents from any browser or phone." },
+      {
+        name: "description",
+        content: "Command your local AI agents from any browser or phone through a private cloud bridge.",
+      },
       { name: "author", content: "Vlix" },
       { property: "og:title", content: "Vlix" },
       {

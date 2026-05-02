@@ -45,7 +45,7 @@ type BridgeAttachment = {
   size: number;
 };
 
-const installCommand = "npm create vlix";
+const installCommand = "npm create vlix@latest";
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "";
 
@@ -160,6 +160,9 @@ function Index() {
       refreshToken: session.refresh_token,
     };
   }, [activeAccount, session]);
+  const cloudConnectCommand = setupPayload
+    ? `VLIX_BRIDGE_SETUP='${setupPayload}' ${installCommand}`
+    : "";
 
   const showCopied = (key: string) => {
     setCopied(key);
@@ -579,34 +582,35 @@ function Index() {
           <aside className="space-y-4 border-l border-white/10 bg-[#111] p-4">
             <Panel title="Desktop bridge">
               <div className="space-y-3">
-                <CommandBox
-                  copied={copied === "install"}
-                  command={installCommand}
-                  onCopy={() => copyText("install", installCommand)}
-                />
+                <p className="text-sm leading-6 text-white/50">
+                  Run the cloud command on the computer with your desktop agents. After it checks
+                  in, your phone can use this website from any network.
+                </p>
                 <Button
                   className="w-full rounded-2xl bg-sky-400 text-black hover:bg-sky-300"
                   onClick={revealSetupPayload}
                 >
                   <Terminal className="mr-2 h-4 w-4" />
-                  Reveal local setup payload
+                  Generate cloud connect command
                 </Button>
                 {setupPayload && (
                   <CommandBox
                     copied={copied === "setup"}
-                    command={`VLIX_BRIDGE_SETUP='${setupPayload}' ${installCommand}`}
-                    onCopy={() =>
-                      copyText("setup", `VLIX_BRIDGE_SETUP='${setupPayload}' ${installCommand}`)
-                    }
+                    command={cloudConnectCommand}
+                    onCopy={() => copyText("setup", cloudConnectCommand)}
                   />
                 )}
                 <Button
                   className="w-full rounded-2xl bg-white/[0.08] text-white hover:bg-white/[0.12]"
-                  onClick={createPairingCode}
+                  onClick={() => copyText("install", installCommand)}
                 >
-                  <QrCode className="mr-2 h-4 w-4" />
-                  Copy pairing code
+                  <Copy className="mr-2 h-4 w-4" />
+                  Copy base installer
                 </Button>
+                <p className="text-xs leading-5 text-white/38">
+                  The base installer only launches Vlix locally. The cloud command above is what
+                  binds this desktop to your Supabase account.
+                </p>
               </div>
             </Panel>
 
@@ -694,8 +698,8 @@ function SignedOut({
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-white/[0.64]">
             Bridge Claude, Codex, and future desktop agents into one private web console. Send
-            prompts, images, and stop commands from any browser while the real work stays on your
-            computer.
+            prompts, images, and stop commands from any browser through Supabase while the real work
+            stays on your computer.
           </p>
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
@@ -708,7 +712,7 @@ function SignedOut({
               ) : (
                 <Terminal className="mr-2 h-5 w-5" />
               )}
-              {copied === "install" ? "Command copied" : "Copy npm create vlix"}
+              {copied === "install" ? "Command copied" : "Copy npm create vlix@latest"}
             </Button>
             <a
               className="inline-flex h-14 items-center justify-center rounded-2xl border border-white/12 bg-white/[0.06] px-6 text-base font-semibold text-white transition hover:bg-white/[0.1]"
@@ -734,8 +738,8 @@ function SignedOut({
               </button>
             </div>
             <p className="mt-3 px-1 text-xs leading-5 text-white/45">
-              Installs and runs the desktop bridge through npm. Native Mac and Windows app
-              installers are separate release artifacts and are not shipped yet.
+              Installs and runs the desktop bridge through npm. Sign in to generate the private
+              cloud command that links your desktop to this website.
             </p>
           </div>
 
@@ -793,17 +797,17 @@ function SignedOut({
           <SalesStep
             icon={Terminal}
             label="Install"
-            text="Run the short npx command on the computer that already has your desktop AI."
+            text="Run the short npm command on the computer that already has your desktop AI."
           />
           <SalesStep
             icon={QrCode}
-            label="Pair"
-            text="Sign in, generate a bridge payload, and connect the local machine to your account."
+            label="Connect"
+            text="Sign in, generate a private cloud command, and bind that machine to your account."
           />
           <SalesStep
             icon={Smartphone}
             label="Control"
-            text="Message Claude, Codex, and supported agents from phone, tablet, or browser."
+            text="Message Claude, Codex, and supported agents from phone, tablet, or browser without LAN access."
           />
         </div>
       </div>

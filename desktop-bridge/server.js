@@ -30,6 +30,7 @@ const BRIDGE_ACCOUNT_FILE = path.join(BRIDGE_STATE_ROOT, "account.json");
 const BRIDGE_ACCOUNTS_ROOT = path.join(BRIDGE_STATE_ROOT, "accounts");
 const BRIDGE_SAVED_ACCOUNTS_ROOT = path.join(BRIDGE_STATE_ROOT, "saved_accounts");
 const BRIDGE_UPLOADS_ROOT = path.join(BRIDGE_STATE_ROOT, "uploads");
+const BRIDGE_CLOUD_CONFIG_FILE = path.join(BRIDGE_STATE_ROOT, "cloud_config.json");
 const DESKTOP_CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex";
 const APP_SERVER_CONTROL_SOCKET = path.join(
   CODEX_HOME,
@@ -561,7 +562,7 @@ const bridgeInfo = (req, account = readBridgeAccount()) => ({
   account: publicBridgeAccount(account),
   appServer: codexAppServer.status,
   install: {
-    npm: "npm create vlix",
+    npm: "npm create vlix@latest",
     github: `npx ${githubNpxTarget()}`,
     git: `git clone ${BRIDGE_REPO_URL} && cd ${path.basename(BRIDGE_REPO_URL)} && npm install && npm start`,
     codexPrompt: `Install and run Vlix from ${BRIDGE_REPO_URL}. Start it, open ${localOrigin()}, and walk me through pairing my phone.`,
@@ -2820,17 +2821,64 @@ const decodeBridgeSetup = (raw) => {
   return null;
 };
 
+const cloudConfigValue = (value) => String(value || "").trim();
+
+const mergeCloudConfig = (...sources) => {
+  const config = {};
+  for (const source of sources) {
+    if (!source || typeof source !== "object") continue;
+    for (const key of [
+      "supabaseUrl",
+      "supabaseAnonKey",
+      "accessToken",
+      "refreshToken",
+      "accountId",
+    ]) {
+      const value = cloudConfigValue(source[key]);
+      if (value) config[key] = value;
+    }
+  }
+  return config;
+};
+
+const hasCompleteCloudConfig = (config) =>
+  Boolean(
+    config?.supabaseUrl &&
+      config?.supabaseAnonKey &&
+      config?.accessToken &&
+      config?.accountId,
+  );
+
+const readSavedCloudConfig = () => {
+  const saved = readJsonFile(BRIDGE_CLOUD_CONFIG_FILE);
+  const config = mergeCloudConfig(saved);
+  return hasCompleteCloudConfig(config) ? config : null;
+};
+
+const saveCloudConfig = (config) => {
+  if (!hasCompleteCloudConfig(config)) return;
+  writeJsonFile(BRIDGE_CLOUD_CONFIG_FILE, {
+    ...mergeCloudConfig(config),
+    savedAt: new Date().toISOString(),
+  });
+  try {
+    fs.chmodSync(BRIDGE_CLOUD_CONFIG_FILE, 0o600);
+  } catch {}
+};
+
 const cloudConfig = () => {
   const setup = decodeBridgeSetup(process.env.VLIX_BRIDGE_SETUP);
-  const config = {
-    supabaseUrl: process.env.VLIX_SUPABASE_URL || setup?.supabaseUrl || "",
-    supabaseAnonKey: process.env.VLIX_SUPABASE_ANON_KEY || setup?.supabaseAnonKey || "",
-    accessToken: process.env.VLIX_SUPABASE_ACCESS_TOKEN || setup?.accessToken || "",
-    refreshToken: process.env.VLIX_SUPABASE_REFRESH_TOKEN || setup?.refreshToken || "",
-    accountId: process.env.VLIX_ACCOUNT_ID || setup?.accountId || "",
+  const saved = readSavedCloudConfig();
+  const envConfig = {
+    supabaseUrl: process.env.VLIX_SUPABASE_URL,
+    supabaseAnonKey: process.env.VLIX_SUPABASE_ANON_KEY,
+    accessToken: process.env.VLIX_SUPABASE_ACCESS_TOKEN,
+    refreshToken: process.env.VLIX_SUPABASE_REFRESH_TOKEN,
+    accountId: process.env.VLIX_ACCOUNT_ID,
   };
-  if (!config.supabaseUrl || !config.supabaseAnonKey || !config.accessToken || !config.accountId)
-    return null;
+  const config = mergeCloudConfig(setup ? null : saved, setup, envConfig);
+  if (!hasCompleteCloudConfig(config)) return null;
+  if (setup || Object.values(envConfig).some(cloudConfigValue)) saveCloudConfig(config);
   return config;
 };
 
@@ -2867,6 +2915,7 @@ const refreshCloudSession = async (config) => {
   if (!payload?.access_token) return false;
   config.accessToken = payload.access_token;
   config.refreshToken = payload.refresh_token || config.refreshToken;
+  saveCloudConfig(config);
   return true;
 };
 
@@ -3133,6 +3182,7 @@ const startCloudSync = () => {
     deviceId: "",
     accountId: config.accountId,
   };
+  console.log(`Vlix cloud sync enabled for account ${config.accountId}.`);
   const tick = async () => {
     try {
       await pollCloudCommands(config);
