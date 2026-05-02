@@ -1,19 +1,27 @@
 import { createFileRoute } from "@tanstack/react-router";
 import type { Session, User } from "@supabase/supabase-js";
 import {
+  ArrowRight,
+  Bot,
   Check,
+  CircleCheck,
   Copy,
+  Download,
   ImagePlus,
   Loader2,
   LockKeyhole,
+  MessageSquareText,
   MonitorUp,
   Plus,
   QrCode,
   Send,
+  ShieldCheck,
+  Sparkles,
   Smartphone,
   Square,
   Terminal,
   Unplug,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -679,26 +687,84 @@ function SignedOut({
   copyInstall: () => void;
 }) {
   return (
-    <section className="mx-auto grid w-full max-w-7xl gap-8 px-5 py-8 sm:px-8 lg:grid-cols-[1.05fr_0.95fr] lg:py-14">
-      <div className="flex min-h-[620px] flex-col justify-between rounded-[2rem] border border-white/10 bg-[#171717] p-5 shadow-2xl shadow-black/30 sm:p-7">
-        <div>
-          <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-sky-400/20 bg-sky-400/10 px-3 py-1 text-sm text-sky-200">
-            <MonitorUp className="h-4 w-4" />
-            Desktop agent bridge
+    <section className="relative overflow-hidden">
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/70 to-transparent" />
+      <div className="mx-auto grid min-h-[calc(100vh-73px)] w-full max-w-7xl gap-8 px-5 py-10 sm:px-8 lg:grid-cols-[0.92fr_1.08fr] lg:items-center lg:py-16">
+        <div className="relative z-10">
+          <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-sm font-medium text-cyan-200 shadow-[0_0_36px_rgba(34,211,238,0.14)]">
+            <span className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.95)]" />
+            Universal AI bridge for desktop agents
           </div>
-          <h1 className="max-w-3xl text-5xl font-semibold leading-[0.95] tracking-tight sm:text-7xl">
-            Pair any device to the AI running on your computer.
+          <h1 className="max-w-4xl text-5xl font-semibold leading-[0.94] tracking-tight text-white sm:text-7xl">
+            Connect your phone to the AI systems running at home.
           </h1>
-          <p className="mt-6 max-w-2xl text-lg leading-8 text-white/[0.62]">
-            Command IQ Console is the web surface. The bridge runs locally, connects to the real
-            desktop agent, and relays private session updates through Supabase.
+          <p className="mt-6 max-w-2xl text-lg leading-8 text-white/[0.64]">
+            Bridge Claude, Codex, and future desktop agents into one private web console. Send
+            prompts, images, and stop commands from any browser while the real work stays on your
+            computer.
           </p>
+
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            <Button
+              className="h-14 rounded-2xl bg-cyan-300 px-6 text-base font-semibold text-black shadow-[0_0_34px_rgba(34,211,238,0.32)] hover:bg-cyan-200"
+              onClick={copyInstall}
+            >
+              {copied === "install" ? (
+                <Check className="mr-2 h-5 w-5" />
+              ) : (
+                <Terminal className="mr-2 h-5 w-5" />
+              )}
+              {copied === "install" ? "Command copied" : "Copy npx installer"}
+            </Button>
+            <a
+              className="inline-flex h-14 items-center justify-center rounded-2xl border border-white/12 bg-white/[0.06] px-6 text-base font-semibold text-white transition hover:bg-white/[0.1]"
+              href="https://github.com/Sassouni1/hello-world"
+              rel="noreferrer"
+              target="_blank"
+            >
+              <Download className="mr-2 h-5 w-5" />
+              Download bridge
+            </a>
+          </div>
+
+          <div className="mt-5 max-w-2xl rounded-2xl border border-white/10 bg-black/60 p-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1 overflow-auto rounded-xl bg-[#050505] px-4 py-3 font-mono text-xs text-cyan-100/90">
+                {installCommand}
+              </div>
+              <button
+                className="rounded-xl bg-white/[0.08] px-4 py-3 text-sm font-semibold text-white hover:bg-white/[0.12]"
+                onClick={copyInstall}
+              >
+                {copied === "install" ? "Copied" : "Copy"}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-8 grid max-w-2xl grid-cols-3 gap-3">
+            <LandingMetric label="Agents" value="Claude · Codex" />
+            <LandingMetric label="Install" value="1 command" />
+            <LandingMetric label="Access" value="Phone + web" />
+          </div>
         </div>
-        <CommandBox copied={copied === "install"} command={installCommand} onCopy={copyInstall} />
+
+        <div className="relative">
+          <div className="absolute -inset-6 rounded-[2.5rem] bg-cyan-400/10 blur-3xl" />
+          <BridgeConsolePreview />
+        </div>
       </div>
 
-      <div className="grid content-start gap-4">
-        <Panel title="Start">
+      <div className="border-y border-white/10 bg-[#0b0b0b]">
+        <div className="mx-auto grid max-w-7xl gap-4 px-5 py-5 sm:px-8 md:grid-cols-4">
+          <FeaturePill icon={ShieldCheck} text="Private account isolation" />
+          <FeaturePill icon={MessageSquareText} text="Messages and images" />
+          <FeaturePill icon={Zap} text="Stop and queue commands" />
+          <FeaturePill icon={Bot} text="Agent-ready connector" />
+        </div>
+      </div>
+
+      <div className="mx-auto grid max-w-7xl gap-5 px-5 py-10 sm:px-8 lg:grid-cols-[0.8fr_1.2fr]">
+        <Panel title="Launch your bridge">
           <div className="space-y-3">
             <input
               className="h-12 w-full rounded-2xl border border-white/10 bg-black px-4 text-white outline-none placeholder:text-white/[0.35]"
@@ -712,30 +778,212 @@ function SignedOut({
               onClick={signInWithEmail}
             >
               {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Send login link
+              Open console
             </Button>
             <Button
               className="h-12 w-full rounded-2xl bg-white/[0.08] text-white hover:bg-white/[0.12]"
               disabled={busy}
               onClick={signInAnonymously}
             >
-              Continue as test user
+              Try without setup
             </Button>
             {notice && <p className="text-sm text-amber-100">{notice}</p>}
           </div>
         </Panel>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <StatusCard icon={QrCode} label="Pairing" value="Account QR and pairing-code flow" />
-          <StatusCard
-            icon={Smartphone}
-            label="Mobile"
-            value="Queue prompts and upload images from phone"
+
+        <div className="grid gap-4 sm:grid-cols-3">
+          <SalesStep
+            icon={Terminal}
+            label="Install"
+            text="Run the short npx command on the computer that already has your desktop AI."
           />
-          <StatusCard icon={Unplug} label="Bridge" value="Local connector claims cloud commands" />
-          <StatusCard icon={LockKeyhole} label="Isolation" value="RLS-backed account ownership" />
+          <SalesStep
+            icon={QrCode}
+            label="Pair"
+            text="Sign in, generate a bridge payload, and connect the local machine to your account."
+          />
+          <SalesStep
+            icon={Smartphone}
+            label="Control"
+            text="Message Claude, Codex, and supported agents from phone, tablet, or browser."
+          />
         </div>
       </div>
     </section>
+  );
+}
+
+function BridgeConsolePreview() {
+  const rows = [
+    { name: "Claude", status: "Ready", active: true },
+    { name: "Codex", status: "Synced", active: false },
+    { name: "Local browser", status: "Visible", active: false },
+  ];
+
+  return (
+    <div className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-[#070707] shadow-2xl shadow-black/60">
+      <div className="flex items-center justify-between border-b border-white/10 px-4 py-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-300 to-violet-400 text-black shadow-[0_0_28px_rgba(34,211,238,0.28)]">
+            <Sparkles className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="text-lg font-semibold">
+              Bridge<span className="text-white/45">·console</span>
+            </div>
+            <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-white/[0.38]">
+              Universal · phone ⇄ desktop
+            </div>
+          </div>
+        </div>
+        <div className="hidden rounded-full border border-white/10 bg-white/[0.04] p-1 md:flex">
+          <span className="rounded-full bg-cyan-300 px-4 py-2 text-sm font-semibold text-black">
+            Claude
+          </span>
+          <span className="px-4 py-2 text-sm font-semibold text-white/60">Codex</span>
+        </div>
+      </div>
+
+      <div className="grid min-h-[520px] md:grid-cols-[245px_1fr]">
+        <div className="border-r border-white/10 bg-[#0c0c0c] p-4">
+          <button className="mb-4 flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-left font-semibold">
+            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-cyan-300 text-black">
+              <Plus className="h-4 w-4" />
+            </span>
+            New chat
+          </button>
+          <div className="rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white/45">
+            Search chats
+          </div>
+          <div className="mt-5 space-y-2">
+            {rows.map((row) => (
+              <div
+                key={row.name}
+                className={`rounded-2xl border px-4 py-3 ${
+                  row.active
+                    ? "border-cyan-300/30 bg-cyan-300/10"
+                    : "border-white/10 bg-white/[0.025]"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold">{row.name}</span>
+                  <span
+                    className={`h-2 w-2 rounded-full ${
+                      row.active ? "bg-cyan-300" : "bg-violet-300"
+                    }`}
+                  />
+                </div>
+                <div className="mt-1 text-xs uppercase tracking-[0.18em] text-white/35">
+                  {row.status}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="absolute bottom-4 hidden items-center gap-2 text-xs text-white/45 md:flex">
+            <span className="h-2 w-2 rounded-full bg-cyan-300" />
+            local bridge online
+          </div>
+        </div>
+
+        <div className="relative flex flex-col bg-[radial-gradient(circle_at_50%_0%,rgba(34,211,238,0.08),transparent_35%)]">
+          <div className="border-b border-white/10 px-5 py-5">
+            <div className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300">
+              Claude · ready
+            </div>
+            <div className="mt-2 text-2xl font-semibold">Run the agents already on your Mac.</div>
+            <div className="mt-1 font-mono text-sm text-white/35">/users/home/desktop</div>
+          </div>
+          <div className="flex-1 px-5 py-6">
+            <PreviewMessage
+              side="left"
+              label="assistant"
+              text="Bridge is connected. Send work from phone, and I will route it to the right desktop agent."
+            />
+            <PreviewMessage
+              side="right"
+              label="you"
+              text="Send this screenshot to Codex and ask what changed."
+            />
+            <div className="my-5 flex items-center gap-3 text-sm text-white/45">
+              <span className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_14px_rgba(34,211,238,0.8)]" />
+              Working for 18s · reading files · applying patch
+              <ArrowRight className="h-4 w-4" />
+            </div>
+          </div>
+          <div className="p-5">
+            <div className="rounded-[1.6rem] border border-white/10 bg-[#1d1d1d] p-3 shadow-[0_0_45px_rgba(34,211,238,0.11)]">
+              <div className="px-3 py-2 text-white/35">
+                Send a prompt to Claude, Codex, or your next agent...
+              </div>
+              <div className="mt-2 flex items-center justify-between">
+                <span className="rounded-full bg-cyan-300/15 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-cyan-200">
+                  Claude
+                </span>
+                <button className="rounded-full bg-cyan-300 px-4 py-2 text-sm font-semibold text-black">
+                  Send <ArrowRight className="ml-1 inline h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PreviewMessage({
+  side,
+  label,
+  text,
+}: {
+  side: "left" | "right";
+  label: string;
+  text: string;
+}) {
+  return (
+    <div className={`mb-4 flex ${side === "right" ? "justify-end" : "justify-start"}`}>
+      <div
+        className={`max-w-[78%] rounded-3xl px-4 py-3 ${
+          side === "right" ? "bg-white/[0.11]" : "bg-transparent"
+        }`}
+      >
+        <div className="mb-1 text-[10px] uppercase tracking-[0.2em] text-white/35">{label}</div>
+        <div className="text-sm leading-6 text-white/80">{text}</div>
+      </div>
+    </div>
+  );
+}
+
+function LandingMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+      <div className="text-xs uppercase tracking-[0.22em] text-white/35">{label}</div>
+      <div className="mt-2 text-sm font-semibold text-white/85">{value}</div>
+    </div>
+  );
+}
+
+function FeaturePill({ icon: Icon, text }: { icon: LucideIcon; text: string }) {
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.025] px-4 py-3 text-sm font-semibold text-white/70">
+      <Icon className="h-4 w-4 text-cyan-200" />
+      {text}
+    </div>
+  );
+}
+
+function SalesStep({ icon: Icon, label, text }: { icon: LucideIcon; label: string; text: string }) {
+  return (
+    <div className="rounded-[1.5rem] border border-white/10 bg-[#151515] p-5">
+      <div className="mb-5 flex h-10 w-10 items-center justify-center rounded-2xl bg-white/[0.07] text-cyan-200">
+        <Icon className="h-5 w-5" />
+      </div>
+      <div className="flex items-center gap-2 font-semibold">
+        <CircleCheck className="h-4 w-4 text-cyan-300" />
+        {label}
+      </div>
+      <p className="mt-3 text-sm leading-6 text-white/[0.54]">{text}</p>
+    </div>
   );
 }
 
