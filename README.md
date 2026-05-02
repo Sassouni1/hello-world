@@ -1,6 +1,6 @@
-# Command IQ Console
+# Vlix
 
-Command IQ Console is a Vite/TanStack web app backed by Supabase, plus a local
+Vlix is a Vite/TanStack web app backed by Supabase, plus a local
 desktop bridge that connects a user's real desktop AI agent sessions to the web.
 
 ## Run The Web App
@@ -13,7 +13,7 @@ npm run dev
 ## Install The Desktop Bridge
 
 ```sh
-npx github:Sassouni1/hello-world
+npx vlix
 ```
 
 The bridge opens a local console, connects to the desktop agent session store,

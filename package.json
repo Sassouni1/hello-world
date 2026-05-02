@@ -1,11 +1,11 @@
 {
-  "name": "command-iq",
+  "name": "vlix",
   "private": false,
-  "description": "Command IQ Console web app and desktop agent connector.",
+  "description": "Vlix web app and desktop agent connector.",
   "sideEffects": false,
   "type": "module",
   "bin": {
-    "command-iq": "desktop-bridge/bin/codex-bridge.js"
+    "vlix": "desktop-bridge/bin/codex-bridge.js"
   },
   "scripts": {
     "dev": "vite dev",

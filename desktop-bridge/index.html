@@ -1,327 +1,443 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Command IQ Console</title>
-  <meta name="description" content="A local web console for browsing sessions, resuming chats, and inspecting browser sessions." />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=image-grid-20260501" />
-</head>
-<body>
-  <main class="app-shell">
-    <header class="global-nav">
-      <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Open chats" title="Open chats" type="button">☰</button>
-      <div class="global-brand">
-        <div class="brand-mark">C</div>
-        <strong>Command IQ <span>Console</span></strong>
-      </div>
-      <nav class="top-links" aria-label="Primary">
-        <button type="button">Dashboard</button>
-        <button type="button">Sessions</button>
-        <button class="is-active" type="button">Messages</button>
-        <button type="button">Browser</button>
-        <button id="mobilePreviewBtn" type="button">Mobile</button>
-        <button id="setupBridgeBtn" type="button">Bridge</button>
-        <button type="button">Settings</button>
-      </nav>
-      <button class="icon-btn" id="refreshBtn" title="Refresh sessions" type="button">↻</button>
-    </header>
-
-    <div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
-
-    <aside class="sidebar" aria-label="Chats">
-      <header class="drawer-header">
-        <strong>Chats</strong>
-        <button class="icon-btn" id="mobileMenuClose" title="Close chats" type="button">×</button>
-      </header>
-      <div class="window-dots" aria-hidden="true">
-        <span class="dot red"></span>
-        <span class="dot yellow"></span>
-        <span class="dot green"></span>
-      </div>
-
-      <button class="new-chat-row" id="newChatBtn" type="button">
-        <span>✎</span>
-        <strong>New chat</strong>
-      </button>
-
-      <button class="new-chat-row pair-phone-row" id="pairPhoneBtn" type="button">
-        <span>⌁</span>
-        <strong>Pair phone</strong>
-      </button>
-
-      <label class="search-box">
-        <input id="chatSearch" type="search" placeholder="Search" autocomplete="off" />
-        <button id="searchClearBtn" class="search-clear" type="button" title="Clear search" aria-label="Clear search">×</button>
-        <kbd>⌘G</kbd>
-      </label>
-
-      <button class="nav-row" id="automationsNav" type="button">
-        <span>◷</span>
-        <strong>Automations</strong>
-        <em id="automationNavCount">0</em>
-      </button>
-
-      <section class="metric-strip" aria-label="Session stats">
-        <span><strong id="chatCount">0</strong> chats</span>
-        <span><strong id="browserCount">0</strong> browsers</span>
-      </section>
-
-      <div class="chat-list" id="chatList" role="list"></div>
-
-      <footer class="sidebar-footer">
-        <span>Chats</span>
-        <span>☰</span>
-      </footer>
-    </aside>
-
-    <section class="conversation" aria-label="Conversation">
-      <header class="topbar">
-        <div>
-          <h2 id="threadTitle">Choose a chat</h2>
-          <p class="eyebrow" id="selectedPath">No workspace selected</p>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vlix</title>
+    <meta
+      name="description"
+      content="A local web console for browsing sessions, resuming chats, and inspecting browser sessions."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css?v=image-grid-20260501" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="global-nav">
+        <button
+          class="mobile-menu-btn"
+          id="mobileMenuBtn"
+          aria-label="Open chats"
+          title="Open chats"
+          type="button"
+        >
+          ☰
+        </button>
+        <div class="global-brand">
+          <div class="brand-mark">C</div>
+          <strong>Vlix</strong>
         </div>
-        <div class="status-stack">
-          <button class="status-action" id="mobilePreviewInlineBtn" type="button">Mobile</button>
-          <div class="status-pill bridge" id="bridgeStatus">Bridge idle</div>
-          <div class="status-pill" id="taskStatus">Idle</div>
-          <button class="status-action danger-btn" id="desktopDisconnectBtn" type="button">Disconnect bridge</button>
-        </div>
+        <nav class="top-links" aria-label="Primary">
+          <button type="button">Dashboard</button>
+          <button type="button">Sessions</button>
+          <button class="is-active" type="button">Messages</button>
+          <button type="button">Browser</button>
+          <button id="mobilePreviewBtn" type="button">Mobile</button>
+          <button id="setupBridgeBtn" type="button">Bridge</button>
+          <button type="button">Settings</button>
+        </nav>
+        <button class="icon-btn" id="refreshBtn" title="Refresh sessions" type="button">↻</button>
       </header>
 
-      <section class="phone-pair-banner" id="phonePairBanner" hidden>
-        <div>
-          <span>Paired to this Mac</span>
-          <strong id="phonePairTitle">Bridge connected</strong>
-          <p>Pick a chat or start a new session. Messages run through the bridge on this computer.</p>
-        </div>
-        <div class="phone-pair-actions">
-          <button class="secondary-btn" id="phoneOpenChatsBtn" type="button">Chats</button>
-          <button class="primary-btn" id="phoneNewChatBtn" type="button">New chat</button>
-          <a class="secondary-btn danger-btn" id="phoneDisconnectBtn" href="/disconnect-phone">Disconnect</a>
-        </div>
-      </section>
+      <div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
 
-      <div class="messages" id="messages">
-        <div class="empty-state">
-          Select a session from the left. Messages are loaded through the connected desktop bridge.
-        </div>
-      </div>
-
-      <form class="composer" id="composer">
-        <label class="repo-picker" id="repoPicker" hidden>
-          <span>Repository</span>
-          <select id="repoSelect"></select>
-        </label>
-        <div class="attachment-preview" id="attachmentPreview" hidden></div>
-        <textarea id="promptInput" rows="1" placeholder="Message..." disabled></textarea>
-        <div class="composer-actions">
-          <button class="upload-btn" id="imageUploadBtn" type="button" title="Attach image" aria-label="Attach image">＋</button>
-          <input id="imageInput" type="file" accept="image/*" multiple capture="environment" hidden />
-          <button class="access-pill" id="fullAuto" type="button" aria-pressed="false" title="Allow the connected assistant to run commands and edit files without asking">Full access</button>
-          <label class="model-picker">
-            <select id="modelSelect" aria-label="Model">
-              <option value="gpt-5.5">5.5</option>
-            </select>
-          </label>
-          <label class="model-picker effort-picker">
-            <select id="effortSelect" aria-label="Reasoning effort">
-              <option value="medium">Medium</option>
-            </select>
-          </label>
-          <button id="stopBtn" class="stop-btn" type="button" hidden title="Stop current turn" aria-label="Stop current turn">Stop</button>
-          <button id="sendBtn" class="primary-btn" type="submit" disabled>Send</button>
-        </div>
-      </form>
-    </section>
-
-    <aside class="browser-panel" aria-label="Browser visibility">
-      <section class="panel-block">
-        <header class="panel-heading">
-          <div>
-            <p class="eyebrow">Browser</p>
-            <h2>Visibility</h2>
-          </div>
-          <button class="icon-btn" id="shotBtn" title="Refresh screenshot" type="button">⌁</button>
+      <aside class="sidebar" aria-label="Chats">
+        <header class="drawer-header">
+          <strong>Chats</strong>
+          <button class="icon-btn" id="mobileMenuClose" title="Close chats" type="button">×</button>
         </header>
+        <div class="window-dots" aria-hidden="true">
+          <span class="dot red"></span>
+          <span class="dot yellow"></span>
+          <span class="dot green"></span>
+        </div>
 
-        <label class="url-row">
-          <span>Preview URL</span>
-          <input id="browserUrl" type="url" />
+        <button class="new-chat-row" id="newChatBtn" type="button">
+          <span>✎</span>
+          <strong>New chat</strong>
+        </button>
+
+        <button class="new-chat-row pair-phone-row" id="pairPhoneBtn" type="button">
+          <span>⌁</span>
+          <strong>Pair phone</strong>
+        </button>
+
+        <label class="search-box">
+          <input id="chatSearch" type="search" placeholder="Search" autocomplete="off" />
+          <button
+            id="searchClearBtn"
+            class="search-clear"
+            type="button"
+            title="Clear search"
+            aria-label="Clear search"
+          >
+            ×
+          </button>
+          <kbd>⌘G</kbd>
         </label>
 
-        <div class="browser-actions">
-          <button id="previewBtn" class="secondary-btn" type="button">Load screenshot</button>
-          <button id="openBrowserBtn" class="secondary-btn" type="button">Open visible</button>
-        </div>
+        <button class="nav-row" id="automationsNav" type="button">
+          <span>◷</span>
+          <strong>Automations</strong>
+          <em id="automationNavCount">0</em>
+        </button>
 
-        <div class="preview-frame">
-          <iframe id="browserFrame" title="Browser preview"></iframe>
-          <img id="browserShot" alt="Browser screenshot preview" hidden />
-        </div>
-      </section>
-
-      <section class="panel-block">
-        <header class="panel-heading compact">
-          <div>
-            <p class="eyebrow">Allowed origins</p>
-            <h2>Browser sessions</h2>
-          </div>
-        </header>
-        <div class="browser-sessions" id="browserSessions"></div>
-      </section>
-
-      <section class="panel-block">
-        <header class="panel-heading compact">
-          <div>
-            <p class="eyebrow">Agents</p>
-            <h2>Automations</h2>
-          </div>
-        </header>
-        <div class="automation-list" id="automationList"></div>
-      </section>
-    </aside>
-  </main>
-
-  <aside class="mobile-preview-shell" id="mobilePreview" aria-label="Mobile viewport preview" hidden>
-    <div class="mobile-preview-card">
-      <header class="mobile-preview-bar">
-        <div>
-          <p class="eyebrow">Viewport</p>
-          <h2 id="mobilePreviewTitle">390 × 844</h2>
-        </div>
-        <div class="mobile-preview-actions">
-          <button class="secondary-btn is-active" data-mobile-size="390x844" type="button">390</button>
-          <button class="secondary-btn" data-mobile-size="430x932" type="button">430</button>
-          <button class="icon-btn" id="mobilePreviewClose" title="Close mobile preview" type="button">×</button>
-        </div>
-      </header>
-      <div class="phone-stage" id="phoneStage">
-        <iframe id="mobilePreviewFrame" title="Mobile viewport"></iframe>
-      </div>
-    </div>
-  </aside>
-
-  <aside class="pairing-shell" id="pairingModal" aria-label="Pair phone" hidden>
-    <section class="pairing-card">
-      <header>
-        <div>
-          <p class="eyebrow">Desktop agent</p>
-          <h2>Pair your phone</h2>
-        </div>
-        <button class="icon-btn" id="pairingClose" title="Close pairing" type="button">×</button>
-      </header>
-      <div class="pairing-grid">
-        <div class="qr-card">
-          <img id="pairingQr" alt="Phone pairing QR code" />
-        </div>
-        <div class="pairing-copy">
-          <strong>Scan from your phone</strong>
-          <p>This phone gets temporary access to your desktop chats through this computer.</p>
-          <a id="pairingLink" href="#" target="_blank" rel="noreferrer">Open pairing link</a>
-          <small id="pairingExpiry">Expires soon</small>
-        </div>
-      </div>
-    </section>
-  </aside>
-
-  <aside class="setup-shell" id="setupModal" aria-label="Bridge setup" hidden>
-    <section class="setup-card">
-      <header>
-        <div>
-          <p class="eyebrow">Local bridge</p>
-          <h2>Install once, pair from the desktop</h2>
-        </div>
-        <button class="icon-btn" id="setupClose" title="Close setup" type="button">×</button>
-      </header>
-
-      <div class="setup-body">
-        <section class="bridge-account-card">
-          <div>
-            <span>Bridge account</span>
-            <strong id="setupAccountTitle">Not created yet</strong>
-            <small id="setupAccountMeta">Create this first, then phones pair to this account and desktop.</small>
-          </div>
-          <a class="account-qr-card" id="setupAccountQrLink" href="#" target="_blank" rel="noreferrer" aria-label="Open account QR link">
-            <img id="setupAccountQr" alt="Bridge account QR code" />
-            <small id="setupAccountQrStatus">Account QR</small>
-          </a>
-          <div class="bridge-account-actions">
-            <input id="setupAccountName" type="text" placeholder="Bridge account name" autocomplete="off" />
-            <button class="secondary-btn" id="setupNewAccountBtn" type="button">New</button>
-            <button class="primary-btn" id="setupCreateAccountBtn" type="button">Create</button>
-          </div>
+        <section class="metric-strip" aria-label="Session stats">
+          <span><strong id="chatCount">0</strong> chats</span>
+          <span><strong id="browserCount">0</strong> browsers</span>
         </section>
 
-        <section class="setup-summary">
-          <div class="setup-step">
-            <span>1</span>
-            <strong>Run bridge</strong>
-          </div>
-          <div class="setup-step">
-            <span>2</span>
-            <strong>Open desktop URL</strong>
-          </div>
-          <div class="setup-step">
-            <span>3</span>
-            <strong>Scan phone QR</strong>
-          </div>
-        </section>
+        <div class="chat-list" id="chatList" role="list"></div>
 
-        <section class="status-grid">
-          <article>
-            <span>Desktop URL</span>
-            <strong id="setupLocalUrl">http://localhost:3001</strong>
-          </article>
-          <article>
-            <span>Phone URL</span>
-            <strong id="setupPhoneUrl">Loading</strong>
-          </article>
-          <article>
-            <span>Agent binary</span>
-            <strong id="setupCodexBin">Loading</strong>
-          </article>
-          <article>
-            <span>Bridge data</span>
-            <strong id="setupCodexHome">Loading</strong>
-          </article>
-        </section>
-
-        <section class="install-grid">
-          <article class="code-card">
-            <header>
-              <strong>Tell your agent</strong>
-              <button class="secondary-btn copy-btn" data-copy-target="setupCodexPrompt" type="button">Copy</button>
-            </header>
-            <pre id="setupCodexPrompt">Loading</pre>
-          </article>
-          <article class="code-card">
-            <header>
-              <strong>GitHub / npx</strong>
-              <button class="secondary-btn copy-btn" data-copy-target="setupGithubCommand" type="button">Copy</button>
-            </header>
-            <pre id="setupGithubCommand">Loading</pre>
-          </article>
-          <article class="code-card">
-            <header>
-              <strong>npm</strong>
-              <button class="secondary-btn copy-btn" data-copy-target="setupNpmCommand" type="button">Copy</button>
-            </header>
-            <pre id="setupNpmCommand">Loading</pre>
-          </article>
-        </section>
-
-        <footer class="setup-actions">
-          <button class="secondary-btn" id="setupPairBtn" type="button">Pair phone</button>
-          <a class="secondary-btn link-btn" id="setupRepoLink" href="#" target="_blank" rel="noreferrer">Repo</a>
+        <footer class="sidebar-footer">
+          <span>Chats</span>
+          <span>☰</span>
         </footer>
-      </div>
-    </section>
-  </aside>
+      </aside>
 
-  <script src="/app.js?v=image-grid-20260501"></script>
-</body>
+      <section class="conversation" aria-label="Conversation">
+        <header class="topbar">
+          <div>
+            <h2 id="threadTitle">Choose a chat</h2>
+            <p class="eyebrow" id="selectedPath">No workspace selected</p>
+          </div>
+          <div class="status-stack">
+            <button class="status-action" id="mobilePreviewInlineBtn" type="button">Mobile</button>
+            <div class="status-pill bridge" id="bridgeStatus">Bridge idle</div>
+            <div class="status-pill" id="taskStatus">Idle</div>
+            <button class="status-action danger-btn" id="desktopDisconnectBtn" type="button">
+              Disconnect bridge
+            </button>
+          </div>
+        </header>
+
+        <section class="phone-pair-banner" id="phonePairBanner" hidden>
+          <div>
+            <span>Paired to this Mac</span>
+            <strong id="phonePairTitle">Bridge connected</strong>
+            <p>
+              Pick a chat or start a new session. Messages run through the bridge on this computer.
+            </p>
+          </div>
+          <div class="phone-pair-actions">
+            <button class="secondary-btn" id="phoneOpenChatsBtn" type="button">Chats</button>
+            <button class="primary-btn" id="phoneNewChatBtn" type="button">New chat</button>
+            <a class="secondary-btn danger-btn" id="phoneDisconnectBtn" href="/disconnect-phone"
+              >Disconnect</a
+            >
+          </div>
+        </section>
+
+        <div class="messages" id="messages">
+          <div class="empty-state">
+            Select a session from the left. Messages are loaded through the connected desktop
+            bridge.
+          </div>
+        </div>
+
+        <form class="composer" id="composer">
+          <label class="repo-picker" id="repoPicker" hidden>
+            <span>Repository</span>
+            <select id="repoSelect"></select>
+          </label>
+          <div class="attachment-preview" id="attachmentPreview" hidden></div>
+          <textarea id="promptInput" rows="1" placeholder="Message..." disabled></textarea>
+          <div class="composer-actions">
+            <button
+              class="upload-btn"
+              id="imageUploadBtn"
+              type="button"
+              title="Attach image"
+              aria-label="Attach image"
+            >
+              ＋
+            </button>
+            <input
+              id="imageInput"
+              type="file"
+              accept="image/*"
+              multiple
+              capture="environment"
+              hidden
+            />
+            <button
+              class="access-pill"
+              id="fullAuto"
+              type="button"
+              aria-pressed="false"
+              title="Allow the connected assistant to run commands and edit files without asking"
+            >
+              Full access
+            </button>
+            <label class="model-picker">
+              <select id="modelSelect" aria-label="Model">
+                <option value="gpt-5.5">5.5</option>
+              </select>
+            </label>
+            <label class="model-picker effort-picker">
+              <select id="effortSelect" aria-label="Reasoning effort">
+                <option value="medium">Medium</option>
+              </select>
+            </label>
+            <button
+              id="stopBtn"
+              class="stop-btn"
+              type="button"
+              hidden
+              title="Stop current turn"
+              aria-label="Stop current turn"
+            >
+              Stop
+            </button>
+            <button id="sendBtn" class="primary-btn" type="submit" disabled>Send</button>
+          </div>
+        </form>
+      </section>
+
+      <aside class="browser-panel" aria-label="Browser visibility">
+        <section class="panel-block">
+          <header class="panel-heading">
+            <div>
+              <p class="eyebrow">Browser</p>
+              <h2>Visibility</h2>
+            </div>
+            <button class="icon-btn" id="shotBtn" title="Refresh screenshot" type="button">
+              ⌁
+            </button>
+          </header>
+
+          <label class="url-row">
+            <span>Preview URL</span>
+            <input id="browserUrl" type="url" />
+          </label>
+
+          <div class="browser-actions">
+            <button id="previewBtn" class="secondary-btn" type="button">Load screenshot</button>
+            <button id="openBrowserBtn" class="secondary-btn" type="button">Open visible</button>
+          </div>
+
+          <div class="preview-frame">
+            <iframe id="browserFrame" title="Browser preview"></iframe>
+            <img id="browserShot" alt="Browser screenshot preview" hidden />
+          </div>
+        </section>
+
+        <section class="panel-block">
+          <header class="panel-heading compact">
+            <div>
+              <p class="eyebrow">Allowed origins</p>
+              <h2>Browser sessions</h2>
+            </div>
+          </header>
+          <div class="browser-sessions" id="browserSessions"></div>
+        </section>
+
+        <section class="panel-block">
+          <header class="panel-heading compact">
+            <div>
+              <p class="eyebrow">Agents</p>
+              <h2>Automations</h2>
+            </div>
+          </header>
+          <div class="automation-list" id="automationList"></div>
+        </section>
+      </aside>
+    </main>
+
+    <aside
+      class="mobile-preview-shell"
+      id="mobilePreview"
+      aria-label="Mobile viewport preview"
+      hidden
+    >
+      <div class="mobile-preview-card">
+        <header class="mobile-preview-bar">
+          <div>
+            <p class="eyebrow">Viewport</p>
+            <h2 id="mobilePreviewTitle">390 × 844</h2>
+          </div>
+          <div class="mobile-preview-actions">
+            <button class="secondary-btn is-active" data-mobile-size="390x844" type="button">
+              390
+            </button>
+            <button class="secondary-btn" data-mobile-size="430x932" type="button">430</button>
+            <button
+              class="icon-btn"
+              id="mobilePreviewClose"
+              title="Close mobile preview"
+              type="button"
+            >
+              ×
+            </button>
+          </div>
+        </header>
+        <div class="phone-stage" id="phoneStage">
+          <iframe id="mobilePreviewFrame" title="Mobile viewport"></iframe>
+        </div>
+      </div>
+    </aside>
+
+    <aside class="pairing-shell" id="pairingModal" aria-label="Pair phone" hidden>
+      <section class="pairing-card">
+        <header>
+          <div>
+            <p class="eyebrow">Desktop agent</p>
+            <h2>Pair your phone</h2>
+          </div>
+          <button class="icon-btn" id="pairingClose" title="Close pairing" type="button">×</button>
+        </header>
+        <div class="pairing-grid">
+          <div class="qr-card">
+            <img id="pairingQr" alt="Phone pairing QR code" />
+          </div>
+          <div class="pairing-copy">
+            <strong>Scan from your phone</strong>
+            <p>This phone gets temporary access to your desktop chats through this computer.</p>
+            <a id="pairingLink" href="#" target="_blank" rel="noreferrer">Open pairing link</a>
+            <small id="pairingExpiry">Expires soon</small>
+          </div>
+        </div>
+      </section>
+    </aside>
+
+    <aside class="setup-shell" id="setupModal" aria-label="Bridge setup" hidden>
+      <section class="setup-card">
+        <header>
+          <div>
+            <p class="eyebrow">Local bridge</p>
+            <h2>Install once, pair from the desktop</h2>
+          </div>
+          <button class="icon-btn" id="setupClose" title="Close setup" type="button">×</button>
+        </header>
+
+        <div class="setup-body">
+          <section class="bridge-account-card">
+            <div>
+              <span>Bridge account</span>
+              <strong id="setupAccountTitle">Not created yet</strong>
+              <small id="setupAccountMeta"
+                >Create this first, then phones pair to this account and desktop.</small
+              >
+            </div>
+            <a
+              class="account-qr-card"
+              id="setupAccountQrLink"
+              href="#"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Open account QR link"
+            >
+              <img id="setupAccountQr" alt="Bridge account QR code" />
+              <small id="setupAccountQrStatus">Account QR</small>
+            </a>
+            <div class="bridge-account-actions">
+              <input
+                id="setupAccountName"
+                type="text"
+                placeholder="Bridge account name"
+                autocomplete="off"
+              />
+              <button class="secondary-btn" id="setupNewAccountBtn" type="button">New</button>
+              <button class="primary-btn" id="setupCreateAccountBtn" type="button">Create</button>
+            </div>
+          </section>
+
+          <section class="setup-summary">
+            <div class="setup-step">
+              <span>1</span>
+              <strong>Run bridge</strong>
+            </div>
+            <div class="setup-step">
+              <span>2</span>
+              <strong>Open desktop URL</strong>
+            </div>
+            <div class="setup-step">
+              <span>3</span>
+              <strong>Scan phone QR</strong>
+            </div>
+          </section>
+
+          <section class="status-grid">
+            <article>
+              <span>Desktop URL</span>
+              <strong id="setupLocalUrl">http://localhost:3001</strong>
+            </article>
+            <article>
+              <span>Phone URL</span>
+              <strong id="setupPhoneUrl">Loading</strong>
+            </article>
+            <article>
+              <span>Agent binary</span>
+              <strong id="setupCodexBin">Loading</strong>
+            </article>
+            <article>
+              <span>Bridge data</span>
+              <strong id="setupCodexHome">Loading</strong>
+            </article>
+          </section>
+
+          <section class="install-grid">
+            <article class="code-card">
+              <header>
+                <strong>Tell your agent</strong>
+                <button
+                  class="secondary-btn copy-btn"
+                  data-copy-target="setupCodexPrompt"
+                  type="button"
+                >
+                  Copy
+                </button>
+              </header>
+              <pre id="setupCodexPrompt">Loading</pre>
+            </article>
+            <article class="code-card">
+              <header>
+                <strong>GitHub / npx</strong>
+                <button
+                  class="secondary-btn copy-btn"
+                  data-copy-target="setupGithubCommand"
+                  type="button"
+                >
+                  Copy
+                </button>
+              </header>
+              <pre id="setupGithubCommand">Loading</pre>
+            </article>
+            <article class="code-card">
+              <header>
+                <strong>npm</strong>
+                <button
+                  class="secondary-btn copy-btn"
+                  data-copy-target="setupNpmCommand"
+                  type="button"
+                >
+                  Copy
+                </button>
+              </header>
+              <pre id="setupNpmCommand">Loading</pre>
+            </article>
+          </section>
+
+          <footer class="setup-actions">
+            <button class="secondary-btn" id="setupPairBtn" type="button">Pair phone</button>
+            <a
+              class="secondary-btn link-btn"
+              id="setupRepoLink"
+              href="#"
+              target="_blank"
+              rel="noreferrer"
+              >Repo</a
+            >
+          </footer>
+        </div>
+      </section>
+    </aside>
+
+    <script src="/app.js?v=image-grid-20260501"></script>
+  </body>
 </html>

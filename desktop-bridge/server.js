@@ -41,7 +41,7 @@ const OBSERVED_PENDING_USER_MS = 10 * 60_000;
 const ACTIVE_MTIME_FALLBACK_MS = 8_000;
 const CHAT_LIST_CACHE_MS = 1500;
 const CHAT_DETAIL_TAIL_BYTES = Number(process.env.CHAT_DETAIL_TAIL_BYTES || 4 * 1024 * 1024);
-const CLOUD_POLL_MS = Number(process.env.COMMAND_IQ_CLOUD_POLL_MS || 2200);
+const CLOUD_POLL_MS = Number(process.env.VLIX_CLOUD_POLL_MS || 2200);
 
 const tasks = new Map();
 const pairings = new Map();
@@ -363,7 +363,7 @@ const pairingOrigin = (req) => {
 
 const localOrigin = () => `http://localhost:${PORT}`;
 
-const bridgeAccountName = () => `${os.userInfo().username || "User"}'s Command IQ Bridge`;
+const bridgeAccountName = () => `${os.userInfo().username || "User"}'s Vlix Bridge`;
 
 const publicBridgeAccount = (account) => {
   if (!account) return null;
@@ -563,7 +563,7 @@ const bridgeInfo = (req, account = readBridgeAccount()) => ({
     npm: `npx ${PACKAGE_NAME}`,
     github: `npx ${githubNpxTarget()}`,
     git: `git clone ${BRIDGE_REPO_URL} && cd ${path.basename(BRIDGE_REPO_URL)} && npm install && npm start`,
-    codexPrompt: `Install and run the Command IQ bridge from ${BRIDGE_REPO_URL}. Start it, open ${localOrigin()}, and walk me through pairing my phone.`,
+    codexPrompt: `Install and run Vlix from ${BRIDGE_REPO_URL}. Start it, open ${localOrigin()}, and walk me through pairing my phone.`,
   },
 });
 
@@ -2387,7 +2387,7 @@ class CodexAppServerClient {
     });
 
     const init = await this.request("initialize", {
-      clientInfo: { name: "command-iq-console", title: "Command IQ Console", version: "1.0.0" },
+      clientInfo: { name: "vlix", title: "Vlix", version: "1.0.0" },
       capabilities: { experimentalApi: true },
     });
     this.notify("initialized");
@@ -2800,13 +2800,13 @@ const decodeBridgeSetup = (raw) => {
 };
 
 const cloudConfig = () => {
-  const setup = decodeBridgeSetup(process.env.COMMAND_IQ_BRIDGE_SETUP);
+  const setup = decodeBridgeSetup(process.env.VLIX_BRIDGE_SETUP);
   const config = {
-    supabaseUrl: process.env.COMMAND_IQ_SUPABASE_URL || setup?.supabaseUrl || "",
-    supabaseAnonKey: process.env.COMMAND_IQ_SUPABASE_ANON_KEY || setup?.supabaseAnonKey || "",
-    accessToken: process.env.COMMAND_IQ_SUPABASE_ACCESS_TOKEN || setup?.accessToken || "",
-    refreshToken: process.env.COMMAND_IQ_SUPABASE_REFRESH_TOKEN || setup?.refreshToken || "",
-    accountId: process.env.COMMAND_IQ_ACCOUNT_ID || setup?.accountId || "",
+    supabaseUrl: process.env.VLIX_SUPABASE_URL || setup?.supabaseUrl || "",
+    supabaseAnonKey: process.env.VLIX_SUPABASE_ANON_KEY || setup?.supabaseAnonKey || "",
+    accessToken: process.env.VLIX_SUPABASE_ACCESS_TOKEN || setup?.accessToken || "",
+    refreshToken: process.env.VLIX_SUPABASE_REFRESH_TOKEN || setup?.refreshToken || "",
+    accountId: process.env.VLIX_ACCOUNT_ID || setup?.accountId || "",
   };
   if (!config.supabaseUrl || !config.supabaseAnonKey || !config.accessToken || !config.accountId)
     return null;
@@ -2872,7 +2872,7 @@ const cloudTable = (config, table, query = "", options = {}) =>
   cloudRequest(config, `/rest/v1/${table}${query ? `?${query}` : ""}`, options);
 
 const stableCloudDeviceId = () => {
-  const raw = process.env.COMMAND_IQ_DEVICE_ID;
+  const raw = process.env.VLIX_DEVICE_ID;
   if (raw && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) {
     return raw;
   }
@@ -3102,9 +3102,7 @@ const startCloudSync = () => {
       deviceId: "",
       accountId: "",
     };
-    console.log(
-      "Command IQ cloud sync disabled. Paste COMMAND_IQ_BRIDGE_SETUP to connect Supabase.",
-    );
+    console.log("Vlix cloud sync disabled. Paste VLIX_BRIDGE_SETUP to connect Supabase.");
     return;
   }
   cloudSyncState = {
@@ -3120,7 +3118,7 @@ const startCloudSync = () => {
       cloudSyncState.lastError = "";
     } catch (error) {
       cloudSyncState.lastError = error.message || "Cloud sync failed.";
-      console.warn(`Command IQ cloud sync: ${cloudSyncState.lastError}`);
+      console.warn(`Vlix cloud sync: ${cloudSyncState.lastError}`);
     }
   };
   tick();
@@ -3351,7 +3349,7 @@ const routeApi = async (req, res, reqUrl) => {
     if (previous) saveBridgeAccountSnapshot(previous);
     const displayName =
       String(body.displayName || "").trim() ||
-      `Private Command IQ Bridge ${new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", minute: "2-digit", hour: "numeric" }).format(new Date())}`;
+      `Private Vlix Bridge ${new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", minute: "2-digit", hour: "numeric" }).format(new Date())}`;
     const nextAccount = createBridgeAccount(displayName, {
       connectDesktop: false,
       legacyCodexAccess: false,
@@ -3756,7 +3754,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   const url = localOrigin();
-  console.log(`Command IQ Bridge listening on ${url}`);
+  console.log(`Vlix Bridge listening on ${url}`);
   console.log(`Phone pairing is available from the desktop app at ${url}`);
   startCloudSync();
   if (process.env.OPEN_ON_START === "1") {

@@ -1,4 +1,4 @@
-# Command IQ Desktop Bridge
+# Vlix Desktop Bridge
 
 Runs on the user's computer beside their desktop AI agent. It opens a local console,
 connects to the real local agent session store, and exposes account-scoped phone pairing.
@@ -6,7 +6,7 @@ connects to the real local agent session store, and exposes account-scoped phone
 From the repository root:
 
 ```sh
-npx github:Sassouni1/hello-world
+npx vlix
 ```
 
 For local development:

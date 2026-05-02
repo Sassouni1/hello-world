@@ -46,7 +46,7 @@ type BridgeAttachment = {
   size: number;
 };
 
-const installCommand = "npx github:Sassouni1/hello-world";
+const installCommand = "npx vlix";
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "";
 
@@ -496,9 +496,7 @@ function Index() {
 
           <section className="relative flex min-h-[720px] flex-col">
             <div className="border-b border-white/10 px-5 py-4">
-              <h1 className="text-2xl font-semibold">
-                {selectedSession?.title || "Command IQ Console"}
-              </h1>
+              <h1 className="text-2xl font-semibold">{selectedSession?.title || "Vlix"}</h1>
               <div className="mt-1 text-xs uppercase tracking-[0.2em] text-white/[0.42]">
                 {selectedSession?.provider_session_id || activeAccount?.id || "No account"}
               </div>
@@ -597,12 +595,9 @@ function Index() {
                 {setupPayload && (
                   <CommandBox
                     copied={copied === "setup"}
-                    command={`COMMAND_IQ_BRIDGE_SETUP='${setupPayload}' ${installCommand}`}
+                    command={`VLIX_BRIDGE_SETUP='${setupPayload}' ${installCommand}`}
                     onCopy={() =>
-                      copyText(
-                        "setup",
-                        `COMMAND_IQ_BRIDGE_SETUP='${setupPayload}' ${installCommand}`,
-                      )
+                      copyText("setup", `VLIX_BRIDGE_SETUP='${setupPayload}' ${installCommand}`)
                     }
                   />
                 )}
@@ -714,7 +709,7 @@ function SignedOut({
               ) : (
                 <Terminal className="mr-2 h-5 w-5" />
               )}
-              {copied === "install" ? "Command copied" : "Copy npx installer"}
+              {copied === "install" ? "Command copied" : "Copy npx vlix"}
             </Button>
             <a
               className="inline-flex h-14 items-center justify-center rounded-2xl border border-white/12 bg-white/[0.06] px-6 text-base font-semibold text-white transition hover:bg-white/[0.1]"
@@ -723,7 +718,7 @@ function SignedOut({
               target="_blank"
             >
               <Download className="mr-2 h-5 w-5" />
-              Download bridge
+              Download Vlix
             </a>
           </div>
 
@@ -764,7 +759,7 @@ function SignedOut({
       </div>
 
       <div className="mx-auto grid max-w-7xl gap-5 px-5 py-10 sm:px-8 lg:grid-cols-[0.8fr_1.2fr]">
-        <Panel title="Launch your bridge">
+        <Panel title="Launch Vlix">
           <div className="space-y-3">
             <input
               className="h-12 w-full rounded-2xl border border-white/10 bg-black px-4 text-white outline-none placeholder:text-white/[0.35]"
@@ -829,7 +824,7 @@ function BridgeConsolePreview() {
           </div>
           <div>
             <div className="text-lg font-semibold">
-              Bridge<span className="text-white/45">·console</span>
+              Vlix<span className="text-white/45">·console</span>
             </div>
             <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-white/[0.38]">
               Universal · phone ⇄ desktop
@@ -994,11 +989,9 @@ function Brand() {
         C
       </div>
       <div>
-        <div className="text-lg font-semibold leading-none">
-          Command IQ <span className="text-violet-300">Console</span>
-        </div>
+        <div className="text-lg font-semibold leading-none">Vlix</div>
         <div className="mt-1 text-xs uppercase tracking-[0.22em] text-white/[0.42]">
-          AI connector
+          Local agents
         </div>
       </div>
     </div>
