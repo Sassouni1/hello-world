@@ -696,7 +696,7 @@ function SignedOut({
             Universal AI bridge for desktop agents
           </div>
           <h1 className="max-w-4xl text-5xl font-semibold leading-[0.94] tracking-tight text-white sm:text-7xl">
-            Connect your phone to the AI systems running at home.
+            Command your desktop AI agents from anywhere.
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-white/[0.64]">
             Bridge Claude, Codex, and future desktop agents into one private web console. Send
