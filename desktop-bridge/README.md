@@ -20,6 +20,9 @@ VLIX_BRIDGE_SETUP='...' npm create vlix@latest
 The first successful cloud setup is saved locally in the user's Codex bridge state,
 so later launches can reconnect without pasting the payload again.
 
+On macOS, the installer creates `~/Applications/Vlix.app` with the Vlix icon.
+Opening that app runs the latest npm bridge and reopens the local console.
+
 For local development:
 
 ```sh

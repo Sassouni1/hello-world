@@ -21,6 +21,9 @@ the hosted Vlix app and copy the generated `VLIX_BRIDGE_SETUP='...' npm create
 vlix@latest` command. That binds the desktop bridge to the user's Supabase account
 so phones do not need to be on the same Wi-Fi network.
 
+On macOS, the installer also creates `~/Applications/Vlix.app` with the Vlix icon
+so the user can reopen the bridge from Applications or Spotlight.
+
 ## Supabase
 
 This repo includes migrations for:
