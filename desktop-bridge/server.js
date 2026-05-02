@@ -12,7 +12,10 @@ const APP_ASSET_FILES = ["index.html", "app.js", "styles.css"].map((file) => pat
 const PORT = Number(process.env.PORT || 3001);
 const HOST = process.env.HOST || "0.0.0.0";
 const PACKAGE_NAME = packageJson.name || "codex-remote-bridge";
-const BRIDGE_REPO_URL = process.env.BRIDGE_REPO_URL || packageJson.repository?.url?.replace(/^git\+/, "").replace(/\.git$/, "") || "https://github.com/YOUR_ACCOUNT/codex-remote-bridge";
+const BRIDGE_REPO_URL =
+  process.env.BRIDGE_REPO_URL ||
+  packageJson.repository?.url?.replace(/^git\+/, "").replace(/\.git$/, "") ||
+  "https://github.com/YOUR_ACCOUNT/codex-remote-bridge";
 const CODEX_HOME = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
 const CODEX_CONFIG = path.join(CODEX_HOME, "config.toml");
 const MODELS_CACHE = path.join(CODEX_HOME, "models_cache.json");
@@ -27,30 +30,40 @@ const BRIDGE_ACCOUNTS_ROOT = path.join(BRIDGE_STATE_ROOT, "accounts");
 const BRIDGE_SAVED_ACCOUNTS_ROOT = path.join(BRIDGE_STATE_ROOT, "saved_accounts");
 const BRIDGE_UPLOADS_ROOT = path.join(BRIDGE_STATE_ROOT, "uploads");
 const DESKTOP_CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex";
-const APP_SERVER_CONTROL_SOCKET = path.join(CODEX_HOME, "app-server-control", "app-server-control.sock");
+const APP_SERVER_CONTROL_SOCKET = path.join(
+  CODEX_HOME,
+  "app-server-control",
+  "app-server-control.sock",
+);
 const PAIRING_TTL_MS = 15 * 60 * 1000;
 const OBSERVED_ACTIVE_FILE_MS = 120_000;
 const OBSERVED_PENDING_USER_MS = 10 * 60_000;
 const ACTIVE_MTIME_FALLBACK_MS = 8_000;
 const CHAT_LIST_CACHE_MS = 1500;
 const CHAT_DETAIL_TAIL_BYTES = Number(process.env.CHAT_DETAIL_TAIL_BYTES || 4 * 1024 * 1024);
+const CLOUD_POLL_MS = Number(process.env.COMMAND_IQ_CLOUD_POLL_MS || 2200);
 
 const tasks = new Map();
 const pairings = new Map();
 let chatListCache = { at: 0, chats: null };
 let queueDrainTimer = null;
+let cloudSyncState = {
+  enabled: false,
+  lastPollAt: null,
+  lastError: "",
+  deviceId: "",
+  accountId: "",
+};
 
 const appAssetVersion = () => {
-  const source = APP_ASSET_FILES
-    .map((file) => {
-      try {
-        const stat = fs.statSync(file);
-        return `${path.basename(file)}:${stat.size}:${Math.round(stat.mtimeMs)}`;
-      } catch {
-        return `${path.basename(file)}:missing`;
-      }
-    })
-    .join("|");
+  const source = APP_ASSET_FILES.map((file) => {
+    try {
+      const stat = fs.statSync(file);
+      return `${path.basename(file)}:${stat.size}:${Math.round(stat.mtimeMs)}`;
+    } catch {
+      return `${path.basename(file)}:missing`;
+    }
+  }).join("|");
   return crypto.createHash("sha1").update(source).digest("hex").slice(0, 12);
 };
 
@@ -114,7 +127,8 @@ const configTomlString = (source, key) => {
 
 const setTomlString = (source, key, value) => {
   const line = `${key} = ${JSON.stringify(String(value))}`;
-  if (new RegExp(`^${key}\\s*=`, "m").test(source)) return source.replace(new RegExp(`^${key}\\s*=.*$`, "m"), line);
+  if (new RegExp(`^${key}\\s*=`, "m").test(source))
+    return source.replace(new RegExp(`^${key}\\s*=.*$`, "m"), line);
   return `${line}\n${source || ""}`;
 };
 
@@ -122,23 +136,35 @@ const listAvailableModels = () => {
   const cache = readJsonFile(MODELS_CACHE);
   const models = Array.isArray(cache?.models) ? cache.models : [];
   return models
-    .filter((model) => model?.slug && model.visibility !== "hidden" && model.slug !== "codex-auto-review")
+    .filter(
+      (model) => model?.slug && model.visibility !== "hidden" && model.slug !== "codex-auto-review",
+    )
     .sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999))
     .map((model) => ({
       slug: model.slug,
       displayName: model.display_name || model.slug,
       shortName: model.slug.replace(/^gpt-/, "").replace("-codex", ""),
       defaultReasoningLevel: model.default_reasoning_level || "medium",
-      supportedReasoningLevels: (model.supported_reasoning_levels || []).map((item) => item.effort).filter(Boolean),
+      supportedReasoningLevels: (model.supported_reasoning_levels || [])
+        .map((item) => item.effort)
+        .filter(Boolean),
     }));
 };
 
 const normalizeCodexSettings = (settings = {}) => {
   const models = listAvailableModels();
-  const fallback = models[0] || { slug: "gpt-5.5", defaultReasoningLevel: "medium", supportedReasoningLevels: ["medium"] };
+  const fallback = models[0] || {
+    slug: "gpt-5.5",
+    defaultReasoningLevel: "medium",
+    supportedReasoningLevels: ["medium"],
+  };
   const selectedModel = models.find((model) => model.slug === settings.model) || fallback;
-  const supported = selectedModel.supportedReasoningLevels?.length ? selectedModel.supportedReasoningLevels : ["medium"];
-  const effort = supported.includes(settings.effort) ? settings.effort : selectedModel.defaultReasoningLevel || supported[0] || "medium";
+  const supported = selectedModel.supportedReasoningLevels?.length
+    ? selectedModel.supportedReasoningLevels
+    : ["medium"];
+  const effort = supported.includes(settings.effort)
+    ? settings.effort
+    : selectedModel.defaultReasoningLevel || supported[0] || "medium";
   return {
     model: selectedModel.slug,
     effort,
@@ -169,7 +195,11 @@ const writeCodexSettings = (next = {}) => {
   source = setTomlString(source, "model", settings.model);
   source = setTomlString(source, "model_reasoning_effort", settings.effort);
   source = setTomlString(source, "approval_policy", settings.fullAccess ? "never" : "on-request");
-  source = setTomlString(source, "sandbox_mode", settings.fullAccess ? "danger-full-access" : "workspace-write");
+  source = setTomlString(
+    source,
+    "sandbox_mode",
+    settings.fullAccess ? "danger-full-access" : "workspace-write",
+  );
   fs.mkdirSync(path.dirname(CODEX_CONFIG), { recursive: true });
   fs.writeFileSync(CODEX_CONFIG, source);
   return readCodexSettings();
@@ -197,7 +227,7 @@ const parseCookies = (req) =>
         } catch {
           return [key, value];
         }
-      })
+      }),
   );
 
 const pairingCookie = (token) =>
@@ -297,9 +327,20 @@ const relayMeta = (auth) => ({
 const authorizeApi = (req, reqUrl) => {
   if (isLoopbackRequest(req)) return { ok: true, local: true, pairing: null };
   const pairing = getValidPairing(req, reqUrl);
-  if (!pairing) return { ok: false, local: false, pairing: null, reason: "Pair this phone from the desktop first." };
+  if (!pairing)
+    return {
+      ok: false,
+      local: false,
+      pairing: null,
+      reason: "Pair this phone from the desktop first.",
+    };
   if (!isPhoneAllowedApiPath(req.method, reqUrl.pathname)) {
-    return { ok: false, local: false, pairing, reason: "This paired phone can only read and send paired chats." };
+    return {
+      ok: false,
+      local: false,
+      pairing,
+      reason: "This paired phone can only read and send paired chats.",
+    };
   }
   return { ok: true, local: false, pairing };
 };
@@ -326,7 +367,8 @@ const bridgeAccountName = () => `${os.userInfo().username || "User"}'s Command I
 
 const publicBridgeAccount = (account) => {
   if (!account) return null;
-  const integrationStatus = account.integrationStatus || (account.desktopDevice?.id ? "CONNECTED" : "NOT_INTEGRATED");
+  const integrationStatus =
+    account.integrationStatus || (account.desktopDevice?.id ? "CONNECTED" : "NOT_INTEGRATED");
   return {
     accountId: account.accountId,
     displayName: account.displayName,
@@ -351,7 +393,9 @@ const accountStorageFile = (accountId) => {
   return safe ? path.join(BRIDGE_ACCOUNTS_ROOT, safe, "account.json") : null;
 };
 
-const uniqueStrings = (values) => [...new Set((Array.isArray(values) ? values : []).map(String).filter(Boolean))];
+const uniqueStrings = (values) => [
+  ...new Set((Array.isArray(values) ? values : []).map(String).filter(Boolean)),
+];
 
 const normalizeBridgeAccount = (account = {}) => {
   const createdAt = account.createdAt || new Date().toISOString();
@@ -363,17 +407,21 @@ const normalizeBridgeAccount = (account = {}) => {
         lastSeenAt: account.desktopDevice.lastSeenAt || createdAt,
       }
     : null;
-  const integrationStatus = account.integrationStatus || (desktopDevice ? "CONNECTED" : "NOT_INTEGRATED");
+  const integrationStatus =
+    account.integrationStatus || (desktopDevice ? "CONNECTED" : "NOT_INTEGRATED");
   return {
     ...account,
-    accountId: safeAccountId(account.accountId) || `acct_${crypto.randomBytes(9).toString("base64url")}`,
+    accountId:
+      safeAccountId(account.accountId) || `acct_${crypto.randomBytes(9).toString("base64url")}`,
     displayName: compact(account.displayName || bridgeAccountName(), 80) || bridgeAccountName(),
     integrationStatus,
     accountQrToken: account.accountQrToken || crypto.randomBytes(24).toString("base64url"),
     createdAt,
     desktopDevice,
     sessionIds: uniqueStrings(account.sessionIds),
-    workspacePaths: uniqueStrings(account.workspacePaths).map((workspace) => path.normalize(workspace)),
+    workspacePaths: uniqueStrings(account.workspacePaths).map((workspace) =>
+      path.normalize(workspace),
+    ),
     syncedAt: account.syncedAt || null,
     legacyCodexAccess: Boolean(account.legacyCodexAccess),
   };
@@ -402,7 +450,8 @@ const readStoredBridgeAccountById = (accountId) => {
   const stored = accountFile ? readJsonFile(accountFile) : null;
   if (stored) {
     const normalized = normalizeBridgeAccount(stored);
-    if (JSON.stringify(stored) !== JSON.stringify(normalized)) writeBridgeAccount(normalized, { makeActive: false });
+    if (JSON.stringify(stored) !== JSON.stringify(normalized))
+      writeBridgeAccount(normalized, { makeActive: false });
     return normalized;
   }
 
@@ -413,7 +462,10 @@ const readStoredBridgeAccountById = (accountId) => {
 
 const saveBridgeAccountSnapshot = (account) => {
   if (!account?.accountId) return;
-  writeJsonFile(path.join(BRIDGE_SAVED_ACCOUNTS_ROOT, `${account.accountId}.json`), normalizeBridgeAccount(account));
+  writeJsonFile(
+    path.join(BRIDGE_SAVED_ACCOUNTS_ROOT, `${account.accountId}.json`),
+    normalizeBridgeAccount(account),
+  );
 };
 
 const createBridgeAccount = (displayName = bridgeAccountName(), options = {}) => {
@@ -460,7 +512,9 @@ const ensureAccountQrToken = (account) => {
     account.accountQrToken = crypto.randomBytes(24).toString("base64url");
   }
   const active = readJsonFile(BRIDGE_ACCOUNT_FILE);
-  const normalized = writeBridgeAccount(account, { makeActive: active?.accountId === account.accountId });
+  const normalized = writeBridgeAccount(account, {
+    makeActive: active?.accountId === account.accountId,
+  });
   Object.assign(account, normalized);
   return account.accountQrToken;
 };
@@ -482,7 +536,8 @@ const createAccountQr = async (req, account = ensureBridgeAccount()) => {
 
 const publicAccountFromSetupToken = (accountId, setupToken) => {
   const account = readStoredBridgeAccountById(accountId);
-  if (!account || account.accountId !== accountId || account.accountQrToken !== setupToken) return null;
+  if (!account || account.accountId !== accountId || account.accountQrToken !== setupToken)
+    return null;
   return publicBridgeAccount(account);
 };
 
@@ -584,7 +639,8 @@ const handleUnintegratedAccountRoute = (req, res, reqUrl, account) => {
   ) {
     send(res, 409, {
       ...base,
-      error: "This fresh bridge account is not connected to a desktop bridge yet, so it cannot read or message chats.",
+      error:
+        "This fresh bridge account is not connected to a desktop bridge yet, so it cannot read or message chats.",
     });
     return true;
   }
@@ -703,7 +759,8 @@ const sessionFiles = () => [
 const sessionFolder = (file) => {
   if (!file) return "unlinked";
   if (file.startsWith(SESSION_ROOT)) return path.dirname(path.relative(SESSION_ROOT, file));
-  if (file.startsWith(ARCHIVE_ROOT)) return `archived/${path.dirname(path.relative(ARCHIVE_ROOT, file))}`;
+  if (file.startsWith(ARCHIVE_ROOT))
+    return `archived/${path.dirname(path.relative(ARCHIVE_ROOT, file))}`;
   return path.dirname(file);
 };
 
@@ -760,7 +817,9 @@ const textFromContent = (content) => {
 const normalizeAttachment = (value, index = 0) => {
   if (!value) return null;
   if (typeof value === "string") {
-    const src = value.startsWith("data:image/") ? value : `/api/attachment?path=${encodeURIComponent(value)}`;
+    const src = value.startsWith("data:image/")
+      ? value
+      : `/api/attachment?path=${encodeURIComponent(value)}`;
     return { kind: "image", src, label: `Image ${index + 1}` };
   }
   const src =
@@ -775,13 +834,18 @@ const normalizeAttachment = (value, index = 0) => {
   if (!src) return null;
   return {
     kind: "image",
-    src: String(src).startsWith("data:image/") || /^https?:\/\//i.test(String(src)) ? String(src) : `/api/attachment?path=${encodeURIComponent(src)}`,
+    src:
+      String(src).startsWith("data:image/") || /^https?:\/\//i.test(String(src))
+        ? String(src)
+        : `/api/attachment?path=${encodeURIComponent(src)}`,
     label: value.name || value.file_name || value.label || `Image ${index + 1}`,
   };
 };
 
 const messageAttachmentsFromPayload = (payload = {}) =>
-  [...(payload.images || []), ...(payload.local_images || [])].map(normalizeAttachment).filter(Boolean);
+  [...(payload.images || []), ...(payload.local_images || [])]
+    .map(normalizeAttachment)
+    .filter(Boolean);
 
 const messageAttachmentsFromContent = (content) =>
   (Array.isArray(content) ? content : [])
@@ -837,7 +901,9 @@ const persistAttachmentFiles = (task) => {
   fs.mkdirSync(taskDir, { recursive: true });
   task.attachments = task.attachments
     .map((attachment, index) => {
-      const match = String(attachment.src || "").match(/^data:(image\/(?:png|jpe?g|gif|webp));base64,([\s\S]+)$/i);
+      const match = String(attachment.src || "").match(
+        /^data:(image\/(?:png|jpe?g|gif|webp));base64,([\s\S]+)$/i,
+      );
       if (!match) return attachment;
       const mime = match[1].toLowerCase();
       const ext = mime.includes("jpeg") || mime.includes("jpg") ? "jpg" : mime.split("/")[1];
@@ -851,13 +917,17 @@ const persistAttachmentFiles = (task) => {
 };
 
 const compact = (text, max = 220) => {
-  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  const clean = String(text || "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (clean.length <= max) return clean;
   return `${clean.slice(0, max - 1)}...`;
 };
 
 const compactBlock = (text, max = 1800) => {
-  const clean = String(text || "").replace(/\r\n/g, "\n").trim();
+  const clean = String(text || "")
+    .replace(/\r\n/g, "\n")
+    .trim();
   if (clean.length <= max) return clean;
   return `${clean.slice(0, max - 4).trimEnd()}\n...`;
 };
@@ -908,10 +978,15 @@ const parseToolArguments = (value) => {
   }
 };
 
-const stripMarkdownShell = (text) => String(text || "").replace(/^\*\*(.*)\*\*$/, "$1").trim();
+const stripMarkdownShell = (text) =>
+  String(text || "")
+    .replace(/^\*\*(.*)\*\*$/, "$1")
+    .trim();
 
 const isTurnTerminalEvent = (type) =>
-  ["task_complete", "turn_aborted", "turn_completed", "turn_stopped", "turn_interrupted"].includes(type);
+  ["task_complete", "turn_aborted", "turn_completed", "turn_stopped", "turn_interrupted"].includes(
+    type,
+  );
 
 const reasoningSummaryText = (summary) =>
   (Array.isArray(summary) ? summary : [])
@@ -934,7 +1009,9 @@ const contentItemsText = (items = []) =>
     .join("\n");
 
 const callEndMeta = (payload = {}) => ({
-  status: payload.status || (payload.success === false ? "failed" : payload.success === true ? "completed" : ""),
+  status:
+    payload.status ||
+    (payload.success === false ? "failed" : payload.success === true ? "completed" : ""),
   exitCode: typeof payload.exit_code === "number" ? payload.exit_code : null,
   durationMs: durationMs(payload.duration),
 });
@@ -955,7 +1032,9 @@ const agentStatusText = (status = {}) => {
   if (typeof status.failed === "string") return status.failed;
   if (typeof status.error === "string") return status.error;
   if (typeof status.running === "string") return status.running;
-  const entries = Object.entries(status).filter(([, value]) => value !== null && value !== undefined && value !== false);
+  const entries = Object.entries(status).filter(
+    ([, value]) => value !== null && value !== undefined && value !== false,
+  );
   if (!entries.length) return "";
   return JSON.stringify(Object.fromEntries(entries), null, 2);
 };
@@ -1068,7 +1147,8 @@ const summarizeToolCall = (payload = {}) => {
   if (name === "js") {
     const title = args.title || "";
     const code = String(args.code || "");
-    const isBrowserUse = /agent\.browser|tab\.playwright|domSnapshot|screenshot|get_visible_screenshot/.test(code);
+    const isBrowserUse =
+      /agent\.browser|tab\.playwright|domSnapshot|screenshot|get_visible_screenshot/.test(code);
     return {
       kind: isBrowserUse ? "browser" : "tool",
       label: title || (isBrowserUse ? "Used browser" : "Ran JavaScript"),
@@ -1090,7 +1170,11 @@ const summarizeToolCall = (payload = {}) => {
     };
   }
 
-  if (name.includes("browser") || name.includes("playwright") || ["get_app_state", "click", "type_text", "press_key", "set_value"].includes(name)) {
+  if (
+    name.includes("browser") ||
+    name.includes("playwright") ||
+    ["get_app_state", "click", "type_text", "press_key", "set_value"].includes(name)
+  ) {
     return {
       kind: "browser",
       label: "Used browser",
@@ -1112,7 +1196,8 @@ const summarizeToolCall = (payload = {}) => {
 };
 
 const outputText = (payload = {}) => {
-  const raw = typeof payload.output === "string" ? payload.output : JSON.stringify(payload.output || "");
+  const raw =
+    typeof payload.output === "string" ? payload.output : JSON.stringify(payload.output || "");
   try {
     const parsed = JSON.parse(raw);
     if (typeof parsed.output === "string") return parsed.output;
@@ -1180,9 +1265,20 @@ const parseSessionMessages = (filePath) => {
 
   const sourceForTurn = () => turnSources.get(currentTurnId) || "";
   const userMessageSource = (text) =>
-    /# In app browser:|<app-context>|<environment_context>|# Files mentioned by the user:/i.test(String(text || "")) ? "desktop" : "bridge";
+    /# In app browser:|<app-context>|<environment_context>|# Files mentioned by the user:/i.test(
+      String(text || ""),
+    )
+      ? "desktop"
+      : "bridge";
 
-  const addMessage = (role, text, timestamp, phase = null, attachments = [], source = sourceForTurn()) => {
+  const addMessage = (
+    role,
+    text,
+    timestamp,
+    phase = null,
+    attachments = [],
+    source = sourceForTurn(),
+  ) => {
     const clean = visibleMessageText(role, text);
     const visibleAttachments = mergeAttachments([], attachments);
     if (!isVisibleChatText(clean) && !visibleAttachments.length) return;
@@ -1215,7 +1311,11 @@ const parseSessionMessages = (filePath) => {
     const key = `${kind}|${event.status || ""}|${event.callId || ""}|${event.timestamp || ""}|${event.label || ""}|${event.text || ""}`;
     if (seenEvents.has(key)) return false;
     seenEvents.add(key);
-    timeline.push({ id: `${event.timestamp}-${timeline.length}`, source: sourceForTurn(), ...event });
+    timeline.push({
+      id: `${event.timestamp}-${timeline.length}`,
+      source: sourceForTurn(),
+      ...event,
+    });
     lastTimelineKind = kind;
     return true;
   };
@@ -1252,9 +1352,13 @@ const parseSessionMessages = (filePath) => {
   }
   const outputCallIds = new Set(
     records
-      .filter((item) => item.type === "response_item" && ["function_call_output", "custom_tool_call_output"].includes(item.payload?.type))
+      .filter(
+        (item) =>
+          item.type === "response_item" &&
+          ["function_call_output", "custom_tool_call_output"].includes(item.payload?.type),
+      )
       .map((item) => item.payload?.call_id)
-      .filter(Boolean)
+      .filter(Boolean),
   );
 
   for (const item of records) {
@@ -1275,8 +1379,14 @@ const parseSessionMessages = (filePath) => {
 
     if (item.type === "turn_context") {
       currentTurnId = item.payload?.turn_id || currentTurnId;
-      const developerText = item.payload?.developer_instructions || item.payload?.collaboration_mode?.settings?.developer_instructions || "";
-      if (currentTurnId && /Codex desktop context|In app browser|app-context/i.test(String(developerText))) {
+      const developerText =
+        item.payload?.developer_instructions ||
+        item.payload?.collaboration_mode?.settings?.developer_instructions ||
+        "";
+      if (
+        currentTurnId &&
+        /Codex desktop context|In app browser|app-context/i.test(String(developerText))
+      ) {
         turnSources.set(currentTurnId, "desktop");
       }
       continue;
@@ -1347,7 +1457,10 @@ const parseSessionMessages = (filePath) => {
       } else if (payload.type === "collab_waiting_end") {
         const agentStatuses = Array.isArray(payload.agent_statuses)
           ? payload.agent_statuses
-          : Object.entries(payload.statuses || {}).map(([thread_id, status]) => ({ thread_id, status }));
+          : Object.entries(payload.statuses || {}).map(([thread_id, status]) => ({
+              thread_id,
+              status,
+            }));
         for (const agent of agentStatuses) {
           addAgentResultEvent({
             timestamp: item.timestamp,
@@ -1368,11 +1481,23 @@ const parseSessionMessages = (filePath) => {
           status: payload.status || {},
         });
       } else if (payload.type === "agent_message") {
-        addMessage("assistant", payload.message || "", item.timestamp, payload.phase || "commentary");
+        addMessage(
+          "assistant",
+          payload.message || "",
+          item.timestamp,
+          payload.phase || "commentary",
+        );
       } else if (payload.type === "user_message") {
         const inferredSource = userMessageSource(payload.message || "");
         if (currentTurnId) turnSources.set(currentTurnId, inferredSource);
-        addMessage("user", payload.message || "", item.timestamp, null, messageAttachmentsFromPayload(payload), inferredSource);
+        addMessage(
+          "user",
+          payload.message || "",
+          item.timestamp,
+          null,
+          messageAttachmentsFromPayload(payload),
+          inferredSource,
+        );
       } else if (payload.type === "agent_reasoning" && payload.text) {
         addTimelineEvent({
           kind: "reasoning",
@@ -1380,11 +1505,21 @@ const parseSessionMessages = (filePath) => {
           label: "Thinking",
           text: compactBlock(stripMarkdownShell(payload.text), 1200),
         });
-      } else if (["exec_command_end", "mcp_tool_call_end", "patch_apply_end", "dynamic_tool_call_response"].includes(payload.type)) {
+      } else if (
+        [
+          "exec_command_end",
+          "mcp_tool_call_end",
+          "patch_apply_end",
+          "dynamic_tool_call_response",
+        ].includes(payload.type)
+      ) {
         const callId = payload.call_id || payload.callId || "";
         if (callId) callEnds.set(callId, callEndMeta(payload));
         if (callId && !outputCallIds.has(callId)) {
-          const toolName = payload.tool || payload.invocation?.tool || (payload.type === "patch_apply_end" ? "apply_patch" : "tool");
+          const toolName =
+            payload.tool ||
+            payload.invocation?.tool ||
+            (payload.type === "patch_apply_end" ? "apply_patch" : "tool");
           const text =
             payload.aggregated_output ||
             payload.formatted_output ||
@@ -1395,7 +1530,10 @@ const parseSessionMessages = (filePath) => {
           addTimelineEvent({
             kind: payload.type === "exec_command_end" ? "command-output" : "tool-output",
             timestamp: item.timestamp,
-            label: payload.success === false || payload.status === "failed" ? "Tool failed" : "Tool finished",
+            label:
+              payload.success === false || payload.status === "failed"
+                ? "Tool failed"
+                : "Tool finished",
             text: compactBlock(text, 1600),
             toolName,
             status: callEnds.get(callId)?.status || "",
@@ -1451,7 +1589,8 @@ const parseSessionMessages = (filePath) => {
 
     if (["function_call", "custom_tool_call"].includes(payload.type)) {
       if (payload.call_id) callNames.set(payload.call_id, payload.name || "tool");
-      if (["spawn_agent", "wait_agent", "close_agent", "send_input"].includes(payload.name)) continue;
+      if (["spawn_agent", "wait_agent", "close_agent", "send_input"].includes(payload.name))
+        continue;
       const summary = summarizeToolCall(payload);
       addTimelineEvent({
         timestamp: item.timestamp,
@@ -1522,7 +1661,7 @@ const parseSessionMessages = (filePath) => {
       textFromContent(payload.content),
       item.timestamp,
       payload.phase || null,
-      messageAttachmentsFromContent(payload.content)
+      messageAttachmentsFromContent(payload.content),
     );
   }
 
@@ -1567,7 +1706,8 @@ const parseSessionSummary = (filePath) => {
     if (item.type === "event_msg") {
       const payload = item.payload || {};
       if (payload.type === "task_started") lastTaskStartedAt = item.timestamp || lastTaskStartedAt;
-      if (isTurnTerminalEvent(payload.type)) lastTaskCompleteAt = item.timestamp || lastTaskCompleteAt;
+      if (isTurnTerminalEvent(payload.type))
+        lastTaskCompleteAt = item.timestamp || lastTaskCompleteAt;
     }
     if (item.type !== "response_item") continue;
     const payload = item.payload || {};
@@ -1591,12 +1731,20 @@ const parseSessionSummary = (filePath) => {
   const hasRecentActivity = now - latestEventMs <= OBSERVED_ACTIVE_FILE_MS;
   const hasRecentMessage = now - lastMessageMs <= OBSERVED_ACTIVE_FILE_MS;
   const tailParseIncomplete = !tailItems.length && now - stat.mtimeMs <= ACTIVE_MTIME_FALLBACK_MS;
-  const observedToolActivity = latestEventMs > lastMessageMs && completedMs < lastMessageMs && hasRecentActivity;
+  const observedToolActivity =
+    latestEventMs > lastMessageMs && completedMs < lastMessageMs && hasRecentActivity;
   const observedCommentaryRunning =
-    lastRole === "assistant" && latestMessagePhase === "commentary" && completedMs < lastMessageMs && hasRecentMessage;
+    lastRole === "assistant" &&
+    latestMessagePhase === "commentary" &&
+    completedMs < lastMessageMs &&
+    hasRecentMessage;
   const observedTurnRunning =
-    (startedMs > completedMs || observedToolActivity || observedCommentaryRunning) && hasRecentActivity;
-  const observedPendingUser = lastRole === "user" && completedMs < lastMessageMs && now - lastMessageMs <= OBSERVED_PENDING_USER_MS;
+    (startedMs > completedMs || observedToolActivity || observedCommentaryRunning) &&
+    hasRecentActivity;
+  const observedPendingUser =
+    lastRole === "user" &&
+    completedMs < lastMessageMs &&
+    now - lastMessageMs <= OBSERVED_PENDING_USER_MS;
   const observedWorking = observedTurnRunning || observedPendingUser || tailParseIncomplete;
 
   return {
@@ -1631,7 +1779,8 @@ const sessionIsActivelyWorking = (sessionId) => {
     const payload = item.payload || {};
     if (item.type === "event_msg") {
       if (payload.type === "task_started") lastTaskStartedAt = item.timestamp || lastTaskStartedAt;
-      if (isTurnTerminalEvent(payload.type)) lastTaskCompleteAt = item.timestamp || lastTaskCompleteAt;
+      if (isTurnTerminalEvent(payload.type))
+        lastTaskCompleteAt = item.timestamp || lastTaskCompleteAt;
       if (payload.type === "user_message") {
         lastRole = "user";
         lastMessageAt = item.timestamp || lastMessageAt;
@@ -1661,14 +1810,25 @@ const sessionIsActivelyWorking = (sessionId) => {
   const hasRecentActivity = now - latestEventMs <= OBSERVED_ACTIVE_FILE_MS;
   const hasRecentMessage = lastMessageMs > 0 && now - lastMessageMs <= OBSERVED_ACTIVE_FILE_MS;
   const hasRunningBridgeTask = [...tasks.values()].some(
-    (task) => task.sessionId === sessionId && task.status === "running"
+    (task) => task.sessionId === sessionId && task.status === "running",
   );
   const explicitTurnRunning = startedMs > completedMs;
-  const pendingUser = lastRole === "user" && completedMs < lastMessageMs && now - lastMessageMs <= OBSERVED_PENDING_USER_MS;
-  const toolActivityRunning = latestEventMs > lastMessageMs && completedMs < lastMessageMs && hasRecentActivity;
+  const pendingUser =
+    lastRole === "user" &&
+    completedMs < lastMessageMs &&
+    now - lastMessageMs <= OBSERVED_PENDING_USER_MS;
+  const toolActivityRunning =
+    latestEventMs > lastMessageMs && completedMs < lastMessageMs && hasRecentActivity;
   const commentaryRunning =
-    lastRole === "assistant" && latestMessagePhase === "commentary" && completedMs < lastMessageMs && hasRecentMessage;
-  return hasRunningBridgeTask || ((explicitTurnRunning || pendingUser || toolActivityRunning || commentaryRunning) && hasRecentActivity);
+    lastRole === "assistant" &&
+    latestMessagePhase === "commentary" &&
+    completedMs < lastMessageMs &&
+    hasRecentMessage;
+  return (
+    hasRunningBridgeTask ||
+    ((explicitTurnRunning || pendingUser || toolActivityRunning || commentaryRunning) &&
+      hasRecentActivity)
+  );
 };
 
 const latestActiveTurnForSession = (sessionId) => {
@@ -1679,10 +1839,18 @@ const latestActiveTurnForSession = (sessionId) => {
     if (item.type !== "event_msg") continue;
     const payload = item.payload || {};
     if (payload.type === "task_started" && payload.turn_id) {
-      active = { threadId: String(sessionId), turnId: payload.turn_id, startedAt: item.timestamp || "" };
+      active = {
+        threadId: String(sessionId),
+        turnId: payload.turn_id,
+        startedAt: item.timestamp || "",
+      };
       continue;
     }
-    if (active && isTurnTerminalEvent(payload.type) && (!payload.turn_id || payload.turn_id === active.turnId)) {
+    if (
+      active &&
+      isTurnTerminalEvent(payload.type) &&
+      (!payload.turn_id || payload.turn_id === active.turnId)
+    ) {
       active = null;
     }
   }
@@ -1717,69 +1885,77 @@ const listChats = () => {
   }
 
   const enriched = indexed.map((chat) => {
-      let messageCount = null;
-      let preview = "";
-      let cwd = "";
-      const folder = sessionFolder(chat.file);
-      if (chat.file && fs.existsSync(chat.file)) {
-        const summary = parseSessionSummary(chat.file);
-        messageCount = summary.messageCount;
-        cwd = summary.meta.cwd || "";
-        preview = summary.preview;
-        chat.activityAt = latestIso(
-          chat.updatedAt,
-          summary.latestEventAt,
-          summary.lastMessageAt,
-          summary.fileUpdatedAt
-        );
-        if (chat.activityAt && new Date(chat.activityAt) > new Date(chat.updatedAt || 0)) chat.updatedAt = chat.activityAt;
-        chat.lastRole = summary.lastRole;
-        chat.lastMessageAt = summary.lastMessageAt;
-        chat.latestEventAt = summary.latestEventAt;
-        chat.lastTaskStartedAt = summary.lastTaskStartedAt;
-        chat.lastTaskCompleteAt = summary.lastTaskCompleteAt;
-        chat.fileUpdatedAt = summary.fileUpdatedAt;
-        chat.observedWorking = summary.observedWorking;
-        chat.parentThreadId = summary.parentThreadId;
-        chat.agentNickname = summary.agentNickname;
-        chat.agentRole = summary.agentRole;
-      }
-      return {
-        ...chat,
-        messageCount,
-        preview,
-        cwd,
-        folder,
-        folderLabel: formatFolderLabel(folder),
-        ...projectFromCwd(cwd, folder),
-      };
-    });
+    let messageCount = null;
+    let preview = "";
+    let cwd = "";
+    const folder = sessionFolder(chat.file);
+    if (chat.file && fs.existsSync(chat.file)) {
+      const summary = parseSessionSummary(chat.file);
+      messageCount = summary.messageCount;
+      cwd = summary.meta.cwd || "";
+      preview = summary.preview;
+      chat.activityAt = latestIso(
+        chat.updatedAt,
+        summary.latestEventAt,
+        summary.lastMessageAt,
+        summary.fileUpdatedAt,
+      );
+      if (chat.activityAt && new Date(chat.activityAt) > new Date(chat.updatedAt || 0))
+        chat.updatedAt = chat.activityAt;
+      chat.lastRole = summary.lastRole;
+      chat.lastMessageAt = summary.lastMessageAt;
+      chat.latestEventAt = summary.latestEventAt;
+      chat.lastTaskStartedAt = summary.lastTaskStartedAt;
+      chat.lastTaskCompleteAt = summary.lastTaskCompleteAt;
+      chat.fileUpdatedAt = summary.fileUpdatedAt;
+      chat.observedWorking = summary.observedWorking;
+      chat.parentThreadId = summary.parentThreadId;
+      chat.agentNickname = summary.agentNickname;
+      chat.agentRole = summary.agentRole;
+    }
+    return {
+      ...chat,
+      messageCount,
+      preview,
+      cwd,
+      folder,
+      folderLabel: formatFolderLabel(folder),
+      ...projectFromCwd(cwd, folder),
+    };
+  });
 
   const visibleChats = enriched.filter(
-    (chat) => !chat.parentThreadId && (chat.messageCount > 0 || chat.observedWorking || chat.preview || chat.title !== chat.id)
+    (chat) =>
+      !chat.parentThreadId &&
+      (chat.messageCount > 0 || chat.observedWorking || chat.preview || chat.title !== chat.id),
   );
 
   const latestByProject = new Map();
   for (const chat of visibleChats) {
     const current = latestByProject.get(chat.projectKey) || 0;
-    latestByProject.set(chat.projectKey, Math.max(current, new Date(chat.activityAt || chat.updatedAt || 0).getTime()));
+    latestByProject.set(
+      chat.projectKey,
+      Math.max(current, new Date(chat.activityAt || chat.updatedAt || 0).getTime()),
+    );
   }
 
   return visibleChats.sort((a, b) => {
-      const archivedA = a.folder.startsWith("archived") ? 1 : 0;
-      const archivedB = b.folder.startsWith("archived") ? 1 : 0;
-      if (archivedA !== archivedB) return archivedA - archivedB;
-      const projectTime = (latestByProject.get(b.projectKey) || 0) - (latestByProject.get(a.projectKey) || 0);
-      if (projectTime !== 0) return projectTime;
-      const projectCompare = a.projectLabel.localeCompare(b.projectLabel);
-      if (projectCompare !== 0) return projectCompare;
-      return new Date(b.activityAt || b.updatedAt || 0) - new Date(a.activityAt || a.updatedAt || 0);
-    });
+    const archivedA = a.folder.startsWith("archived") ? 1 : 0;
+    const archivedB = b.folder.startsWith("archived") ? 1 : 0;
+    if (archivedA !== archivedB) return archivedA - archivedB;
+    const projectTime =
+      (latestByProject.get(b.projectKey) || 0) - (latestByProject.get(a.projectKey) || 0);
+    if (projectTime !== 0) return projectTime;
+    const projectCompare = a.projectLabel.localeCompare(b.projectLabel);
+    if (projectCompare !== 0) return projectCompare;
+    return new Date(b.activityAt || b.updatedAt || 0) - new Date(a.activityAt || a.updatedAt || 0);
+  });
 };
 
 const listChatsCached = ({ force = false } = {}) => {
   const now = Date.now();
-  if (!force && chatListCache.chats && now - chatListCache.at <= CHAT_LIST_CACHE_MS) return chatListCache.chats;
+  if (!force && chatListCache.chats && now - chatListCache.at <= CHAT_LIST_CACHE_MS)
+    return chatListCache.chats;
   const chats = listChats();
   chatListCache = { at: now, chats };
   return chats;
@@ -1794,14 +1970,23 @@ const getIndexedChat = (id) => {
   const summary = parseSessionSummary(file);
   return {
     id,
-    title: compact(indexRow?.thread_name || parsed.meta.thread_name || parsed.messages.find((m) => m.role === "user")?.text || id, 96),
+    title: compact(
+      indexRow?.thread_name ||
+        parsed.meta.thread_name ||
+        parsed.messages.find((m) => m.role === "user")?.text ||
+        id,
+      96,
+    ),
     updatedAt: indexRow?.updated_at || fs.statSync(file).mtime.toISOString(),
     file,
     folder: sessionFolder(file),
     folderLabel: formatFolderLabel(sessionFolder(file)),
     ...projectFromCwd(parsed.meta.cwd || "", sessionFolder(file)),
     messageCount: parsed.messages.length,
-    preview: compact([...parsed.messages].reverse().find((m) => m.role === "assistant" || m.role === "user")?.text || ""),
+    preview: compact(
+      [...parsed.messages].reverse().find((m) => m.role === "assistant" || m.role === "user")
+        ?.text || "",
+    ),
     cwd: parsed.meta.cwd || "",
     observedWorking: summary.observedWorking,
     parsed,
@@ -1976,7 +2161,12 @@ const listActiveTasksForAccount = (account) => {
       return task.sessionId && accountCanAccessChat(account, task.sessionId);
     })
     .map(publicTask);
-  const activeSessionIds = new Set(active.filter((task) => task.status === "running").map((task) => task.sessionId).filter(Boolean));
+  const activeSessionIds = new Set(
+    active
+      .filter((task) => task.status === "running")
+      .map((task) => task.sessionId)
+      .filter(Boolean),
+  );
   const observed = listChatsForAccount(account)
     .filter((chat) => chat.observedWorking && !activeSessionIds.has(chat.id))
     .map((chat) => ({
@@ -1995,12 +2185,16 @@ const listActiveTasksForAccount = (account) => {
       fullAuto: false,
       observed: true,
     }));
-  return [...active, ...observed].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  return [...active, ...observed].sort(
+    (a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0),
+  );
 };
 
 const accountPrivateWorkspace = (account) => {
   const accountFile = accountStorageFile(account?.accountId);
-  const workspace = accountFile ? path.join(path.dirname(accountFile), "workspace") : path.join(BRIDGE_STATE_ROOT, "workspace");
+  const workspace = accountFile
+    ? path.join(path.dirname(accountFile), "workspace")
+    : path.join(BRIDGE_STATE_ROOT, "workspace");
   fs.mkdirSync(workspace, { recursive: true });
   return workspace;
 };
@@ -2025,14 +2219,18 @@ const syncBridgeAccountFromCodex = (account) => {
   if (!isBridgeAccountIntegrated(account)) return account;
   if (account.legacyCodexAccess) {
     const synced = { ...account, syncedAt: new Date().toISOString() };
-    return writeBridgeAccount(synced, { makeActive: readJsonFile(BRIDGE_ACCOUNT_FILE)?.accountId === account.accountId });
+    return writeBridgeAccount(synced, {
+      makeActive: readJsonFile(BRIDGE_ACCOUNT_FILE)?.accountId === account.accountId,
+    });
   }
 
   const chats = listChats();
   const sessionIds = uniqueStrings([...account.sessionIds, ...chats.map((chat) => chat.id)]);
   const workspacePaths = uniqueStrings([
     ...account.workspacePaths,
-    ...chats.map((chat) => chat.cwd).filter((cwd) => cwd && fs.existsSync(cwd) && fs.statSync(cwd).isDirectory()),
+    ...chats
+      .map((chat) => chat.cwd)
+      .filter((cwd) => cwd && fs.existsSync(cwd) && fs.statSync(cwd).isDirectory()),
   ]);
   const synced = {
     ...account,
@@ -2040,7 +2238,9 @@ const syncBridgeAccountFromCodex = (account) => {
     workspacePaths,
     syncedAt: new Date().toISOString(),
   };
-  return writeBridgeAccount(synced, { makeActive: readJsonFile(BRIDGE_ACCOUNT_FILE)?.accountId === account.accountId });
+  return writeBridgeAccount(synced, {
+    makeActive: readJsonFile(BRIDGE_ACCOUNT_FILE)?.accountId === account.accountId,
+  });
 };
 
 const listWorkspacesForAccount = (account) => {
@@ -2048,11 +2248,19 @@ const listWorkspacesForAccount = (account) => {
   if (account.legacyCodexAccess) return listWorkspaces();
 
   const workspacePaths = uniqueStrings(account.workspacePaths).filter(
-    (cwd) => cwd && fs.existsSync(cwd) && fs.statSync(cwd).isDirectory()
+    (cwd) => cwd && fs.existsSync(cwd) && fs.statSync(cwd).isDirectory(),
   );
-  if (!workspacePaths.length) return [workspaceSummary(accountPrivateWorkspace(account), { label: "Private workspace", private: true })];
+  if (!workspacePaths.length)
+    return [
+      workspaceSummary(accountPrivateWorkspace(account), {
+        label: "Private workspace",
+        private: true,
+      }),
+    ];
 
-  return workspacePaths.map((cwd) => workspaceSummary(cwd)).sort((a, b) => a.label.localeCompare(b.label));
+  return workspacePaths
+    .map((cwd) => workspaceSummary(cwd))
+    .sort((a, b) => a.label.localeCompare(b.label));
 };
 
 const linkSessionToAccount = (accountId, sessionId) => {
@@ -2062,7 +2270,10 @@ const linkSessionToAccount = (accountId, sessionId) => {
   const sessionIds = uniqueStrings([...account.sessionIds, sessionId]);
   if (sessionIds.length === account.sessionIds.length) return;
   const active = readJsonFile(BRIDGE_ACCOUNT_FILE);
-  writeBridgeAccount({ ...account, sessionIds }, { makeActive: active?.accountId === account.accountId });
+  writeBridgeAccount(
+    { ...account, sessionIds },
+    { makeActive: active?.accountId === account.accountId },
+  );
 };
 
 const disconnectBridgeAccount = () => {
@@ -2205,12 +2416,16 @@ class CodexAppServerClient {
       return;
     }
 
-    if (Object.prototype.hasOwnProperty.call(message, "result") || Object.prototype.hasOwnProperty.call(message, "error")) {
+    if (
+      Object.prototype.hasOwnProperty.call(message, "result") ||
+      Object.prototype.hasOwnProperty.call(message, "error")
+    ) {
       const pending = this.pending.get(message.id);
       if (!pending) return;
       this.pending.delete(message.id);
       clearTimeout(pending.timer);
-      if (message.error) pending.reject(new Error(message.error.message || JSON.stringify(message.error)));
+      if (message.error)
+        pending.reject(new Error(message.error.message || JSON.stringify(message.error)));
       else pending.resolve(message.result);
       return;
     }
@@ -2224,7 +2439,8 @@ class CodexAppServerClient {
   }
 
   request(method, params, timeoutMs = 60_000) {
-    if (!this.child?.stdin?.writable) return Promise.reject(new Error("Desktop agent is not running."));
+    if (!this.child?.stdin?.writable)
+      return Promise.reject(new Error("Desktop agent is not running."));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -2237,7 +2453,8 @@ class CodexAppServerClient {
   }
 
   notify(method, params) {
-    if (this.child?.stdin?.writable) this.child.stdin.write(`${JSON.stringify({ method, params })}\n`);
+    if (this.child?.stdin?.writable)
+      this.child.stdin.write(`${JSON.stringify({ method, params })}\n`);
   }
 
   respond(id, result) {
@@ -2296,13 +2513,17 @@ class CodexAppServerClient {
 
     if (message.method === "item/commandExecution/requestApproval") {
       this.respond(message.id, { decision: allow ? "accept" : "decline" });
-      if (task && !allow) task.error = "The assistant requested command approval. Turn on Full access to allow command execution from this web app.";
+      if (task && !allow)
+        task.error =
+          "The assistant requested command approval. Turn on Full access to allow command execution from this web app.";
       return;
     }
 
     if (message.method === "item/fileChange/requestApproval") {
       this.respond(message.id, { decision: allow ? "accept" : "decline" });
-      if (task && !allow) task.error = "The assistant requested file-change approval. Turn on Full access to allow file edits from this web app.";
+      if (task && !allow)
+        task.error =
+          "The assistant requested file-change approval. Turn on Full access to allow file edits from this web app.";
       return;
     }
 
@@ -2415,6 +2636,7 @@ const runTaskAsync = (task) => {
     task.status = "failed";
     task.error = error.message || "Assistant task failed.";
     task.endedAt = new Date().toISOString();
+    task.waitResolve?.();
   });
 };
 
@@ -2427,7 +2649,11 @@ const startCodexTask = (sessionId, prompt, options = {}) => {
 
 const taskBlocksSession = (candidate) =>
   [...tasks.values()].some(
-    (task) => task !== candidate && task.status === "running" && task.sessionId && task.sessionId === candidate.sessionId
+    (task) =>
+      task !== candidate &&
+      task.status === "running" &&
+      task.sessionId &&
+      task.sessionId === candidate.sessionId,
   );
 
 const drainQueuedTasks = () => {
@@ -2449,7 +2675,9 @@ const scheduleQueueDrain = () => {
 
 const queueCodexTask = (sessionId, prompt, options = {}) => {
   const task = createCodexTask(sessionId, prompt, options, "queued");
-  codexAppServer.appendTaskEvent(task, "queue", { message: "Queued until the current desktop turn finishes." });
+  codexAppServer.appendTaskEvent(task, "queue", {
+    message: "Queued until the current desktop turn finishes.",
+  });
   tasks.set(task.id, task);
   scheduleQueueDrain();
   return task;
@@ -2466,7 +2694,8 @@ const interruptTask = async (task) => {
     return { stopped: true, status: task.status };
   }
   if (task.status !== "running") return { stopped: false, status: task.status };
-  if (!task.sessionId || !task.turnId) throw new Error("This running task does not have an interruptable turn yet.");
+  if (!task.sessionId || !task.turnId)
+    throw new Error("This running task does not have an interruptable turn yet.");
   await codexAppServer.interruptTurn(task.sessionId, task.turnId);
   task.status = "interrupted";
   task.error = "Turn interrupted.";
@@ -2499,7 +2728,7 @@ const runCodexAppServerTask = async (task) => {
         persistExtendedHistory: true,
         ...sessionOverrides,
       },
-      90_000
+      90_000,
     );
     task.cwd = resumed.cwd || task.cwd;
   } else {
@@ -2511,7 +2740,7 @@ const runCodexAppServerTask = async (task) => {
         persistExtendedHistory: true,
         ...sessionOverrides,
       },
-      90_000
+      90_000,
     );
     task.sessionId = started.thread.id;
     task.file = started.thread.path || null;
@@ -2522,7 +2751,9 @@ const runCodexAppServerTask = async (task) => {
   const localImages = persistAttachmentFiles(task);
   const turnOverrides = {
     ...modelOverrides,
-    ...(task.fullAuto ? { approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } } : {}),
+    ...(task.fullAuto
+      ? { approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } }
+      : {}),
   };
   const turnInput = [
     {
@@ -2539,11 +2770,361 @@ const runCodexAppServerTask = async (task) => {
       input: turnInput,
       ...turnOverrides,
     },
-    90_000
+    90_000,
   );
   task.turnId = startedTurn.turn.id;
   client.trackTurn(task);
   await client.waitForTask(task);
+};
+
+const decodeBridgeSetup = (raw) => {
+  if (!raw) return null;
+  const text = String(raw).trim();
+  const candidates = [text];
+  try {
+    candidates.push(Buffer.from(text, "base64").toString("utf8"));
+  } catch {}
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (
+        parsed?.supabaseUrl &&
+        parsed?.supabaseAnonKey &&
+        parsed?.accessToken &&
+        parsed?.accountId
+      )
+        return parsed;
+    } catch {}
+  }
+  return null;
+};
+
+const cloudConfig = () => {
+  const setup = decodeBridgeSetup(process.env.COMMAND_IQ_BRIDGE_SETUP);
+  const config = {
+    supabaseUrl: process.env.COMMAND_IQ_SUPABASE_URL || setup?.supabaseUrl || "",
+    supabaseAnonKey: process.env.COMMAND_IQ_SUPABASE_ANON_KEY || setup?.supabaseAnonKey || "",
+    accessToken: process.env.COMMAND_IQ_SUPABASE_ACCESS_TOKEN || setup?.accessToken || "",
+    refreshToken: process.env.COMMAND_IQ_SUPABASE_REFRESH_TOKEN || setup?.refreshToken || "",
+    accountId: process.env.COMMAND_IQ_ACCOUNT_ID || setup?.accountId || "",
+  };
+  if (!config.supabaseUrl || !config.supabaseAnonKey || !config.accessToken || !config.accountId)
+    return null;
+  return config;
+};
+
+const cloudHeaders = (config, extra = {}) => ({
+  apikey: config.supabaseAnonKey,
+  Authorization: `Bearer ${config.accessToken}`,
+  "Content-Type": "application/json",
+  ...extra,
+});
+
+const cloudUrl = (config, path) => `${config.supabaseUrl.replace(/\/$/, "")}${path}`;
+
+const parseCloudPayload = (text) => {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { message: text };
+  }
+};
+
+const refreshCloudSession = async (config) => {
+  if (!config.refreshToken) return false;
+  const response = await fetch(cloudUrl(config, "/auth/v1/token?grant_type=refresh_token"), {
+    method: "POST",
+    headers: {
+      apikey: config.supabaseAnonKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ refresh_token: config.refreshToken }),
+  });
+  if (!response.ok) return false;
+  const payload = await response.json();
+  if (!payload?.access_token) return false;
+  config.accessToken = payload.access_token;
+  config.refreshToken = payload.refresh_token || config.refreshToken;
+  return true;
+};
+
+const cloudRequest = async (config, path, options = {}) => {
+  const response = await fetch(cloudUrl(config, path), {
+    method: options.method || "GET",
+    headers: cloudHeaders(config, options.headers),
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+  });
+  const text = await response.text();
+  const payload = parseCloudPayload(text);
+  if (!response.ok) {
+    if (response.status === 401 && !options.retried && (await refreshCloudSession(config))) {
+      return cloudRequest(config, path, { ...options, retried: true });
+    }
+    const message =
+      payload?.message || payload?.error_description || payload?.error || response.statusText;
+    throw new Error(`Cloud sync ${response.status}: ${message}`);
+  }
+  return payload;
+};
+
+const cloudTable = (config, table, query = "", options = {}) =>
+  cloudRequest(config, `/rest/v1/${table}${query ? `?${query}` : ""}`, options);
+
+const stableCloudDeviceId = () => {
+  const raw = process.env.COMMAND_IQ_DEVICE_ID;
+  if (raw && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) {
+    return raw;
+  }
+  const hash = crypto
+    .createHash("sha1")
+    .update(`${os.hostname()}|${CODEX_HOME}`)
+    .digest("hex")
+    .slice(0, 32);
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
+};
+
+const cloudUpsertDevice = async (config) => {
+  const now = new Date().toISOString();
+  const deviceId = stableCloudDeviceId();
+  const rows = await cloudTable(config, "bridge_devices", "on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+    body: {
+      id: deviceId,
+      account_id: config.accountId,
+      device_name: os.hostname() || "Desktop bridge",
+      platform: `${os.platform()} ${os.release()}`,
+      status: "online",
+      paired_at: now,
+      last_seen_at: now,
+    },
+  });
+  cloudSyncState.deviceId = rows?.[0]?.id || deviceId;
+  cloudSyncState.accountId = config.accountId;
+  return cloudSyncState.deviceId;
+};
+
+const cloudSelectSingle = async (config, table, query) => {
+  const rows = await cloudTable(config, table, `${query}&limit=1`);
+  return Array.isArray(rows) ? rows[0] || null : null;
+};
+
+const cloudClaimCommand = async (config, command, deviceId) => {
+  const rows = await cloudTable(
+    config,
+    "bridge_commands",
+    `id=eq.${encodeURIComponent(command.id)}&status=eq.queued`,
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: {
+        status: "claimed",
+        claimed_by_device_id: deviceId,
+        claimed_at: new Date().toISOString(),
+      },
+    },
+  );
+  return Array.isArray(rows) ? rows[0] || null : null;
+};
+
+const cloudUpdateCommand = (config, commandId, body) =>
+  cloudTable(config, "bridge_commands", `id=eq.${encodeURIComponent(commandId)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body,
+  });
+
+const cloudUpdateSession = (config, sessionId, body) =>
+  cloudTable(config, "bridge_sessions", `id=eq.${encodeURIComponent(sessionId)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body,
+  });
+
+const cloudInsertMessage = (config, body) =>
+  cloudTable(config, "bridge_messages", "", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body,
+  });
+
+const storageObjectUrl = (config, bucket, objectPath) =>
+  cloudUrl(
+    config,
+    `/storage/v1/object/${encodeURIComponent(bucket)}/${String(objectPath).split("/").map(encodeURIComponent).join("/")}`,
+  );
+
+const downloadCloudAttachments = async (config, attachments = []) => {
+  const result = [];
+  for (const attachment of Array.isArray(attachments) ? attachments.slice(0, 6) : []) {
+    if (!attachment?.bucket || !attachment?.path) continue;
+    const response = await fetch(storageObjectUrl(config, attachment.bucket, attachment.path), {
+      headers: cloudHeaders(config),
+    });
+    if (!response.ok) continue;
+    const mime =
+      attachment.type || response.headers.get("content-type") || "application/octet-stream";
+    if (!String(mime).startsWith("image/")) continue;
+    const buffer = Buffer.from(await response.arrayBuffer());
+    result.push({
+      kind: "image",
+      src: `data:${mime};base64,${buffer.toString("base64")}`,
+      label: attachment.name || "Cloud image",
+      type: mime,
+      size: buffer.length,
+    });
+  }
+  return result;
+};
+
+const commandSessionThreadId = (sessionRow) => {
+  const providerId = String(sessionRow?.provider_session_id || "");
+  if (!providerId || providerId.startsWith("web-")) return null;
+  return providerId;
+};
+
+const completeCloudMessageCommand = async (config, command, sessionRow) => {
+  const body = String(command.body || "").trim();
+  const attachments = await downloadCloudAttachments(config, command.attachments);
+  const task = startCodexTask(commandSessionThreadId(sessionRow), body, {
+    accountId: config.accountId,
+    attachments,
+    fullAuto: true,
+    cwd: sessionRow?.workspace_path || undefined,
+  });
+  await codexAppServer.waitForTask(task);
+  const now = new Date().toISOString();
+  const ok = task.status === "complete";
+  await cloudUpdateSession(config, sessionRow.id, {
+    provider_session_id: task.sessionId || sessionRow.provider_session_id,
+    status: ok ? "done" : "error",
+    activity_at: now,
+    updated_at: now,
+    metadata: {
+      ...(sessionRow.metadata &&
+      typeof sessionRow.metadata === "object" &&
+      !Array.isArray(sessionRow.metadata)
+        ? sessionRow.metadata
+        : {}),
+      localTaskId: task.id,
+      turnId: task.turnId,
+      outputCount: task.output.length,
+    },
+  });
+  await cloudInsertMessage(config, {
+    account_id: command.account_id,
+    session_id: sessionRow.id,
+    role: ok ? "assistant" : "event",
+    body: ok ? task.finalMessage || "Done." : task.error || "Desktop assistant failed.",
+    event_type: ok ? null : "error",
+    event_payload: ok ? {} : { taskId: task.id, error: task.error },
+    attachments: [],
+  });
+  await cloudUpdateCommand(config, command.id, {
+    status: ok ? "completed" : "failed",
+    error: ok ? null : task.error || "Desktop assistant failed.",
+    completed_at: now,
+  });
+};
+
+const completeCloudStopCommand = async (config, command, sessionRow) => {
+  const providerId = commandSessionThreadId(sessionRow);
+  if (!providerId) throw new Error("No desktop session id is available to stop yet.");
+  await interruptObservedSession(providerId);
+  const now = new Date().toISOString();
+  await cloudUpdateSession(config, sessionRow.id, {
+    status: "idle",
+    activity_at: now,
+    updated_at: now,
+  });
+  await cloudUpdateCommand(config, command.id, {
+    status: "completed",
+    completed_at: now,
+    error: null,
+  });
+};
+
+const processCloudCommand = async (config, command) => {
+  const sessionRow = command.session_id
+    ? await cloudSelectSingle(
+        config,
+        "bridge_sessions",
+        `id=eq.${encodeURIComponent(command.session_id)}&account_id=eq.${encodeURIComponent(config.accountId)}`,
+      )
+    : null;
+  if (command.kind !== "sync" && !sessionRow)
+    throw new Error("Cloud command does not reference an available session.");
+  if (command.kind === "message") return completeCloudMessageCommand(config, command, sessionRow);
+  if (command.kind === "stop") return completeCloudStopCommand(config, command, sessionRow);
+  if (command.kind === "sync") {
+    await cloudUpdateCommand(config, command.id, {
+      status: "completed",
+      completed_at: new Date().toISOString(),
+      error: null,
+    });
+    return;
+  }
+  throw new Error(`Unsupported cloud command: ${command.kind}`);
+};
+
+const pollCloudCommands = async (config) => {
+  const deviceId = await cloudUpsertDevice(config);
+  cloudSyncState.enabled = true;
+  cloudSyncState.lastPollAt = new Date().toISOString();
+  const commands = await cloudTable(
+    config,
+    "bridge_commands",
+    `account_id=eq.${encodeURIComponent(config.accountId)}&status=eq.queued&order=created_at.asc&limit=3`,
+  );
+  for (const command of Array.isArray(commands) ? commands : []) {
+    const claimed = await cloudClaimCommand(config, command, deviceId);
+    if (!claimed) continue;
+    try {
+      await processCloudCommand(config, claimed);
+    } catch (error) {
+      await cloudUpdateCommand(config, claimed.id, {
+        status: "failed",
+        error: error.message || "Cloud command failed.",
+        completed_at: new Date().toISOString(),
+      });
+    }
+  }
+};
+
+const startCloudSync = () => {
+  const config = cloudConfig();
+  if (!config) {
+    cloudSyncState = {
+      enabled: false,
+      lastPollAt: null,
+      lastError: "",
+      deviceId: "",
+      accountId: "",
+    };
+    console.log(
+      "Command IQ cloud sync disabled. Paste COMMAND_IQ_BRIDGE_SETUP to connect Supabase.",
+    );
+    return;
+  }
+  cloudSyncState = {
+    enabled: true,
+    lastPollAt: null,
+    lastError: "",
+    deviceId: "",
+    accountId: config.accountId,
+  };
+  const tick = async () => {
+    try {
+      await pollCloudCommands(config);
+      cloudSyncState.lastError = "";
+    } catch (error) {
+      cloudSyncState.lastError = error.message || "Cloud sync failed.";
+      console.warn(`Command IQ cloud sync: ${cloudSyncState.lastError}`);
+    }
+  };
+  tick();
+  setInterval(tick, CLOUD_POLL_MS);
 };
 
 const handleScreenshot = async (req, res, reqUrl) => {
@@ -2601,8 +3182,16 @@ const routeApi = async (req, res, reqUrl) => {
     return true;
   }
 
+  if (req.method === "GET" && reqUrl.pathname === "/api/cloud/status") {
+    send(res, 200, { cloud: cloudSyncState });
+    return true;
+  }
+
   if (req.method === "GET" && reqUrl.pathname === "/api/bridge/account/public") {
-    const account = publicAccountFromSetupToken(reqUrl.searchParams.get("account") || "", reqUrl.searchParams.get("setupToken") || "");
+    const account = publicAccountFromSetupToken(
+      reqUrl.searchParams.get("account") || "",
+      reqUrl.searchParams.get("setupToken") || "",
+    );
     if (!account) {
       send(res, 401, { ok: false, error: "Account QR is invalid or expired." });
       return true;
@@ -2619,7 +3208,8 @@ const routeApi = async (req, res, reqUrl) => {
     const account = ensureBridgeAccount();
     if (!isBridgeAccountIntegrated(account)) {
       send(res, 409, {
-        error: "This bridge account is not integrated with a desktop yet. Save it as a test account, then connect a desktop bridge before pairing a phone.",
+        error:
+          "This bridge account is not integrated with a desktop yet. Save it as a test account, then connect a desktop bridge before pairing a phone.",
         account: publicBridgeAccount(account),
       });
       return true;
@@ -2662,7 +3252,9 @@ const routeApi = async (req, res, reqUrl) => {
   if (req.method === "POST" && reqUrl.pathname === "/api/pairing/disconnect") {
     const token = getPairingToken(req, reqUrl);
     const result = revokePairingToken(token, { allowClearAll: isLoopbackRequest(req) });
-    console.log(`Phone pairing disconnect: token=${token ? token.slice(0, 8) : "none"} revoked=${result.revokedCount} remaining=${result.remainingPairings}`);
+    console.log(
+      `Phone pairing disconnect: token=${token ? token.slice(0, 8) : "none"} revoked=${result.revokedCount} remaining=${result.remainingPairings}`,
+    );
     send(res, 200, result, { "Set-Cookie": clearPairingCookie() });
     return true;
   }
@@ -2681,7 +3273,15 @@ const routeApi = async (req, res, reqUrl) => {
 
   if (req.method === "POST" && reqUrl.pathname === "/api/codex-settings") {
     const body = await readBody(req);
-    send(res, 200, writeCodexSettings({ model: body.model, effort: body.effort, fullAccess: Boolean(body.fullAccess) }));
+    send(
+      res,
+      200,
+      writeCodexSettings({
+        model: body.model,
+        effort: body.effort,
+        fullAccess: Boolean(body.fullAccess),
+      }),
+    );
     return true;
   }
 
@@ -2712,12 +3312,12 @@ const routeApi = async (req, res, reqUrl) => {
       ext === ".png"
         ? "image/png"
         : ext === ".jpg" || ext === ".jpeg"
-        ? "image/jpeg"
-        : ext === ".gif"
-        ? "image/gif"
-        : ext === ".webp"
-        ? "image/webp"
-        : "";
+          ? "image/jpeg"
+          : ext === ".gif"
+            ? "image/gif"
+            : ext === ".webp"
+              ? "image/webp"
+              : "";
     if (!contentType || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
       send(res, 404, { error: "Image attachment was not found." });
       return true;
@@ -2752,8 +3352,14 @@ const routeApi = async (req, res, reqUrl) => {
     const displayName =
       String(body.displayName || "").trim() ||
       `Private Command IQ Bridge ${new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", minute: "2-digit", hour: "numeric" }).format(new Date())}`;
-    const nextAccount = createBridgeAccount(displayName, { connectDesktop: false, legacyCodexAccess: false });
-    send(res, 200, { account: publicBridgeAccount(nextAccount), previousAccount: publicBridgeAccount(previous) });
+    const nextAccount = createBridgeAccount(displayName, {
+      connectDesktop: false,
+      legacyCodexAccess: false,
+    });
+    send(res, 200, {
+      account: publicBridgeAccount(nextAccount),
+      previousAccount: publicBridgeAccount(previous),
+    });
     return true;
   }
 
@@ -2764,7 +3370,9 @@ const routeApi = async (req, res, reqUrl) => {
     }
     const body = await readBody(req);
     const existing = readBridgeAccount();
-    const displayName = String(body.displayName || existing?.displayName || bridgeAccountName()).trim();
+    const displayName = String(
+      body.displayName || existing?.displayName || bridgeAccountName(),
+    ).trim();
     const account = existing || createBridgeAccount(displayName);
     if (existing && displayName && displayName !== existing.displayName) {
       account.displayName = compact(displayName, 80);
@@ -2795,7 +3403,7 @@ const routeApi = async (req, res, reqUrl) => {
     const connected = connectBridgeAccount();
     const synced = syncBridgeAccountFromCodex(connected);
     console.log(
-      `Desktop bridge connected: account=${synced.accountId} sessions=${synced.sessionIds.length} mode=${codexAppServer.status.mode}`
+      `Desktop bridge connected: account=${synced.accountId} sessions=${synced.sessionIds.length} mode=${codexAppServer.status.mode}`,
     );
     send(res, 200, {
       ok: true,
@@ -2819,7 +3427,12 @@ const routeApi = async (req, res, reqUrl) => {
     }
     const disconnected = disconnectBridgeAccount();
     console.log(`Desktop bridge disconnected: account=${disconnected.accountId}`);
-    send(res, 200, { ok: true, account: publicBridgeAccount(disconnected) }, { "Set-Cookie": clearPairingCookie() });
+    send(
+      res,
+      200,
+      { ok: true, account: publicBridgeAccount(disconnected) },
+      { "Set-Cookie": clearPairingCookie() },
+    );
     return true;
   }
 
@@ -2828,7 +3441,10 @@ const routeApi = async (req, res, reqUrl) => {
     return true;
   }
 
-  if (!isBridgeAccountIntegrated(account) && handleUnintegratedAccountRoute(req, res, reqUrl, account)) {
+  if (
+    !isBridgeAccountIntegrated(account) &&
+    handleUnintegratedAccountRoute(req, res, reqUrl, account)
+  ) {
     return true;
   }
 
@@ -2857,7 +3473,12 @@ const routeApi = async (req, res, reqUrl) => {
       return true;
     }
     const { parsed, ...chatSummary } = chat;
-    send(res, 200, { chat: chatSummary, meta: publicSessionMeta(parsed.meta), messages: parsed.messages, timeline: parsed.timeline || parsed.messages });
+    send(res, 200, {
+      chat: chatSummary,
+      meta: publicSessionMeta(parsed.meta),
+      messages: parsed.messages,
+      timeline: parsed.timeline || parsed.messages,
+    });
     return true;
   }
 
@@ -2865,14 +3486,24 @@ const routeApi = async (req, res, reqUrl) => {
   if (req.method === "GET" && chatEventsMatch) {
     const id = decodeURIComponent(chatEventsMatch[1]);
     if (!accountCanAccessChat(account, id)) {
-      res.writeHead(404, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" });
-      res.end(`event: error\ndata: ${JSON.stringify({ error: "Chat is not available for this bridge account." })}\n\n`);
+      res.writeHead(404, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      res.end(
+        `event: error\ndata: ${JSON.stringify({ error: "Chat is not available for this bridge account." })}\n\n`,
+      );
       return true;
     }
     const chatFile = sessionFileById().get(id);
     if (!chatFile) {
-      res.writeHead(404, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" });
-      res.end(`event: error\ndata: ${JSON.stringify({ error: "Chat session file was not found." })}\n\n`);
+      res.writeHead(404, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      res.end(
+        `event: error\ndata: ${JSON.stringify({ error: "Chat session file was not found." })}\n\n`,
+      );
       return true;
     }
 
@@ -2968,7 +3599,11 @@ const routeApi = async (req, res, reqUrl) => {
   const taskMatch = reqUrl.pathname.match(/^\/api\/tasks\/([^/]+)$/);
   if (req.method === "GET" && taskMatch) {
     const task = tasks.get(decodeURIComponent(taskMatch[1]));
-    if (!task || (task.accountId && task.accountId !== account.accountId && !account.legacyCodexAccess)) send(res, 404, { error: "Task not found." });
+    if (
+      !task ||
+      (task.accountId && task.accountId !== account.accountId && !account.legacyCodexAccess)
+    )
+      send(res, 404, { error: "Task not found." });
     else send(res, 200, { task: publicTask(task) });
     return true;
   }
@@ -2976,7 +3611,10 @@ const routeApi = async (req, res, reqUrl) => {
   const taskStopMatch = reqUrl.pathname.match(/^\/api\/tasks\/([^/]+)\/stop$/);
   if (req.method === "POST" && taskStopMatch) {
     const task = tasks.get(decodeURIComponent(taskStopMatch[1]));
-    if (!task || (task.accountId && task.accountId !== account.accountId && !account.legacyCodexAccess)) {
+    if (
+      !task ||
+      (task.accountId && task.accountId !== account.accountId && !account.legacyCodexAccess)
+    ) {
       send(res, 404, { error: "Task not found." });
       return true;
     }
@@ -2992,30 +3630,45 @@ const routeApi = async (req, res, reqUrl) => {
       send(res, 404, { error: "Chat is not available for this bridge account." });
       return true;
     }
-    const task = [...tasks.values()].find((item) => item.status === "running" && item.sessionId === sessionId);
+    const task = [...tasks.values()].find(
+      (item) => item.status === "running" && item.sessionId === sessionId,
+    );
     const result = task ? await interruptTask(task) : await interruptObservedSession(sessionId);
     send(res, 200, result);
     return true;
   }
 
   if (req.method === "GET" && reqUrl.pathname === "/api/browser-sessions") {
-    send(res, 200, { sessions: listBrowserSessionsForAccount(account), account: publicBridgeAccount(account) });
+    send(res, 200, {
+      sessions: listBrowserSessionsForAccount(account),
+      account: publicBridgeAccount(account),
+    });
     return true;
   }
 
   if (req.method === "GET" && reqUrl.pathname === "/api/automations") {
-    send(res, 200, { automations: listAutomationsForAccount(account), account: publicBridgeAccount(account) });
+    send(res, 200, {
+      automations: listAutomationsForAccount(account),
+      account: publicBridgeAccount(account),
+    });
     return true;
   }
 
   if (req.method === "GET" && reqUrl.pathname === "/api/workspaces") {
-    send(res, 200, { workspaces: listWorkspacesForAccount(account), account: publicBridgeAccount(account) });
+    send(res, 200, {
+      workspaces: listWorkspacesForAccount(account),
+      account: publicBridgeAccount(account),
+    });
     return true;
   }
 
   if (req.method === "GET" && reqUrl.pathname === "/api/tasks") {
     const liveAccount = syncBridgeAccountFromCodex(account);
-    send(res, 200, { tasks: listActiveTasksForAccount(liveAccount), account: publicBridgeAccount(liveAccount), appVersion: appAssetVersion() });
+    send(res, 200, {
+      tasks: listActiveTasksForAccount(liveAccount),
+      account: publicBridgeAccount(liveAccount),
+      appVersion: appAssetVersion(),
+    });
     return true;
   }
 
@@ -3051,10 +3704,12 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && reqUrl.pathname === "/disconnect-phone") {
     const token = getPairingToken(req, reqUrl);
     const result = revokePairingToken(token);
-    console.log(`Phone pairing disconnect page: token=${token ? token.slice(0, 8) : "none"} revoked=${result.revokedCount} remaining=${result.remainingPairings}`);
+    console.log(
+      `Phone pairing disconnect page: token=${token ? token.slice(0, 8) : "none"} revoked=${result.revokedCount} remaining=${result.remainingPairings}`,
+    );
     res.writeHead(303, {
       "Cache-Control": "no-store",
-      "Location": "/?phone=1&disconnected=1",
+      Location: "/?phone=1&disconnected=1",
       "Set-Cookie": clearPairingCookie(),
     });
     res.end();
@@ -3079,16 +3734,16 @@ const server = http.createServer(async (req, res) => {
     ext === ".html"
       ? "text/html; charset=utf-8"
       : ext === ".css"
-      ? "text/css; charset=utf-8"
-      : ext === ".js"
-      ? "text/javascript; charset=utf-8"
-      : ext === ".json"
-      ? "application/json; charset=utf-8"
-      : ext === ".svg"
-      ? "image/svg+xml"
-      : ext === ".png"
-      ? "image/png"
-      : "text/plain; charset=utf-8";
+        ? "text/css; charset=utf-8"
+        : ext === ".js"
+          ? "text/javascript; charset=utf-8"
+          : ext === ".json"
+            ? "application/json; charset=utf-8"
+            : ext === ".svg"
+              ? "image/svg+xml"
+              : ext === ".png"
+                ? "image/png"
+                : "text/plain; charset=utf-8";
 
   const headers = { "Cache-Control": "no-store", "Content-Type": contentType };
   const incomingPair = String(reqUrl.searchParams.get("pair") || "").trim();
@@ -3103,6 +3758,7 @@ server.listen(PORT, HOST, () => {
   const url = localOrigin();
   console.log(`Command IQ Bridge listening on ${url}`);
   console.log(`Phone pairing is available from the desktop app at ${url}`);
+  startCloudSync();
   if (process.env.OPEN_ON_START === "1") {
     try {
       openUrl(url);
