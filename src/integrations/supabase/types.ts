@@ -14,7 +14,21 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      counter: {
+        Row: {
+          id: number
+          value: number
+        }
+        Insert: {
+          id?: number
+          value?: number
+        }
+        Update: {
+          id?: number
+          value?: number
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
