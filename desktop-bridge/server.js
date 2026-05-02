@@ -560,7 +560,7 @@ const bridgeInfo = (req, account = readBridgeAccount()) => ({
   account: publicBridgeAccount(account),
   appServer: codexAppServer.status,
   install: {
-    npm: `npx ${PACKAGE_NAME}`,
+    npm: "npm create vlix",
     github: `npx ${githubNpxTarget()}`,
     git: `git clone ${BRIDGE_REPO_URL} && cd ${path.basename(BRIDGE_REPO_URL)} && npm install && npm start`,
     codexPrompt: `Install and run Vlix from ${BRIDGE_REPO_URL}. Start it, open ${localOrigin()}, and walk me through pairing my phone.`,

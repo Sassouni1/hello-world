@@ -1,0 +1,14 @@
+{
+  "name": "create-vlix",
+  "version": "1.0.0",
+  "description": "Launch the Vlix desktop bridge installer.",
+  "private": false,
+  "license": "UNLICENSED",
+  "bin": {
+    "create-vlix": "bin/create-vlix.js"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ]
+}

@@ -13,7 +13,7 @@ npm run dev
 ## Install The Desktop Bridge
 
 ```sh
-npx vlix-install
+npm create vlix
 ```
 
 The bridge opens a local console, connects to the desktop agent session store,

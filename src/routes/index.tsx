@@ -6,7 +6,6 @@ import {
   Check,
   CircleCheck,
   Copy,
-  Download,
   ImagePlus,
   Loader2,
   LockKeyhole,
@@ -46,7 +45,7 @@ type BridgeAttachment = {
   size: number;
 };
 
-const installCommand = "npx vlix-install";
+const installCommand = "npm create vlix";
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "";
 
@@ -709,16 +708,16 @@ function SignedOut({
               ) : (
                 <Terminal className="mr-2 h-5 w-5" />
               )}
-              {copied === "install" ? "Command copied" : "Copy npx vlix-install"}
+              {copied === "install" ? "Command copied" : "Copy npm create vlix"}
             </Button>
             <a
               className="inline-flex h-14 items-center justify-center rounded-2xl border border-white/12 bg-white/[0.06] px-6 text-base font-semibold text-white transition hover:bg-white/[0.1]"
-              href="https://github.com/Sassouni1/hello-world"
+              href="https://www.npmjs.com/package/create-vlix"
               rel="noreferrer"
               target="_blank"
             >
-              <Download className="mr-2 h-5 w-5" />
-              Download Vlix
+              View npm package
+              <ArrowRight className="ml-2 h-5 w-5" />
             </a>
           </div>
 
@@ -734,6 +733,10 @@ function SignedOut({
                 {copied === "install" ? "Copied" : "Copy"}
               </button>
             </div>
+            <p className="mt-3 px-1 text-xs leading-5 text-white/45">
+              Installs and runs the desktop bridge through npm. Native Mac and Windows app
+              installers are separate release artifacts and are not shipped yet.
+            </p>
           </div>
 
           <div className="mt-8 grid max-w-2xl grid-cols-3 gap-3">
