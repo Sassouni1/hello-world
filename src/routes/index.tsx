@@ -860,32 +860,15 @@ function RemoteAccessShowcase() {
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-[280px_1fr] md:items-center">
-          <div className="mx-auto w-full max-w-[290px] rounded-[2.2rem] border border-white/12 bg-black p-3 shadow-2xl shadow-cyan-950/30">
-            <div className="rounded-[1.7rem] border border-white/10 bg-[#111] p-4">
-              <div className="mb-5 flex items-center justify-between">
-                <div>
-                  <div className="text-xs uppercase tracking-[0.22em] text-cyan-200">Vlix</div>
-                  <div className="mt-1 text-sm text-white/45">Phone console</div>
-                </div>
-                <span className="h-3 w-3 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.95)]" />
-              </div>
-              <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 font-mono text-[11px] text-cyan-100/80">
-                https://vlix1.lovable.app
-              </div>
-              <div className="space-y-3">
-                <PhoneBubble side="right" text="Send this screenshot to Codex and ask what broke." />
-                <PhoneBubble side="left" text="Desktop bridge claimed it. Codex is working now." />
-                <div className="flex items-center gap-2 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Working · reading files
-                </div>
-              </div>
-              <div className="mt-5 rounded-2xl border border-white/10 bg-[#222] px-3 py-3 text-sm text-white/35">
-                Message...
-              </div>
-            </div>
-          </div>
+        <div className="grid gap-4 md:grid-cols-[390px_1fr] md:items-center">
+          <figure className="mx-auto w-full max-w-[390px]">
+            <img
+              alt="Vlix mobile console running on a phone through the cloud relay"
+              className="h-auto w-full select-none object-contain drop-shadow-[0_44px_80px_rgba(34,211,238,0.13)]"
+              draggable={false}
+              src="/vlix-remote-phone.png"
+            />
+          </figure>
 
           <div className="space-y-3">
             <RemoteRelayRow
@@ -1023,20 +1006,6 @@ function BridgeConsolePreview() {
             </div>
           </div>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function PhoneBubble({ side, text }: { side: "left" | "right"; text: string }) {
-  return (
-    <div className={`flex ${side === "right" ? "justify-end" : "justify-start"}`}>
-      <div
-        className={`max-w-[82%] rounded-2xl px-3 py-2 text-xs leading-5 ${
-          side === "right" ? "bg-white/[0.12] text-white/88" : "bg-transparent text-white/70"
-        }`}
-      >
-        {text}
       </div>
     </div>
   );
