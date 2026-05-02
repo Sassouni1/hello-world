@@ -6,7 +6,7 @@ connects to the real local agent session store, and exposes account-scoped phone
 From the repository root:
 
 ```sh
-npx vlix
+npx vlix-install
 ```
 
 For local development:

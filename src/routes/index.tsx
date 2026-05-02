@@ -46,7 +46,7 @@ type BridgeAttachment = {
   size: number;
 };
 
-const installCommand = "npx vlix";
+const installCommand = "npx vlix-install";
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "";
 
@@ -709,7 +709,7 @@ function SignedOut({
               ) : (
                 <Terminal className="mr-2 h-5 w-5" />
               )}
-              {copied === "install" ? "Command copied" : "Copy npx vlix"}
+              {copied === "install" ? "Command copied" : "Copy npx vlix-install"}
             </Button>
             <a
               className="inline-flex h-14 items-center justify-center rounded-2xl border border-white/12 bg-white/[0.06] px-6 text-base font-semibold text-white transition hover:bg-white/[0.1]"

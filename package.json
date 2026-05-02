@@ -1,11 +1,16 @@
 {
-  "name": "vlix",
+  "name": "vlix-install",
+  "version": "1.0.0",
   "private": false,
   "description": "Vlix web app and desktop agent connector.",
   "sideEffects": false,
   "type": "module",
+  "files": [
+    "desktop-bridge",
+    "README.md"
+  ],
   "bin": {
-    "vlix": "desktop-bridge/bin/codex-bridge.js"
+    "vlix-install": "desktop-bridge/bin/codex-bridge.js"
   },
   "scripts": {
     "dev": "vite dev",

@@ -5,6 +5,6 @@
   "type": "commonjs",
   "main": "server.js",
   "bin": {
-    "vlix": "bin/codex-bridge.js"
+    "vlix-install": "bin/codex-bridge.js"
   }
 }
