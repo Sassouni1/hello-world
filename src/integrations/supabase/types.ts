@@ -14,6 +14,286 @@ export type Database = {
   }
   public: {
     Tables: {
+      bridge_accounts: {
+        Row: {
+          created_at: string
+          display_name: string
+          id: string
+          owner_user_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string
+          id?: string
+          owner_user_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string
+          id?: string
+          owner_user_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      bridge_commands: {
+        Row: {
+          account_id: string
+          attachments: Json
+          body: string | null
+          claimed_at: string | null
+          claimed_by_device_id: string | null
+          completed_at: string | null
+          created_at: string
+          error: string | null
+          id: string
+          kind: string
+          requested_by: string
+          session_id: string | null
+          status: string
+        }
+        Insert: {
+          account_id: string
+          attachments?: Json
+          body?: string | null
+          claimed_at?: string | null
+          claimed_by_device_id?: string | null
+          completed_at?: string | null
+          created_at?: string
+          error?: string | null
+          id?: string
+          kind?: string
+          requested_by: string
+          session_id?: string | null
+          status?: string
+        }
+        Update: {
+          account_id?: string
+          attachments?: Json
+          body?: string | null
+          claimed_at?: string | null
+          claimed_by_device_id?: string | null
+          completed_at?: string | null
+          created_at?: string
+          error?: string | null
+          id?: string
+          kind?: string
+          requested_by?: string
+          session_id?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bridge_commands_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "bridge_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bridge_commands_claimed_by_device_id_fkey"
+            columns: ["claimed_by_device_id"]
+            isOneToOne: false
+            referencedRelation: "bridge_devices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bridge_commands_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "bridge_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bridge_devices: {
+        Row: {
+          account_id: string
+          created_at: string
+          device_name: string
+          id: string
+          last_seen_at: string | null
+          paired_at: string | null
+          platform: string | null
+          public_key: string | null
+          status: string
+        }
+        Insert: {
+          account_id: string
+          created_at?: string
+          device_name: string
+          id?: string
+          last_seen_at?: string | null
+          paired_at?: string | null
+          platform?: string | null
+          public_key?: string | null
+          status?: string
+        }
+        Update: {
+          account_id?: string
+          created_at?: string
+          device_name?: string
+          id?: string
+          last_seen_at?: string | null
+          paired_at?: string | null
+          platform?: string | null
+          public_key?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bridge_devices_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "bridge_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bridge_messages: {
+        Row: {
+          account_id: string
+          attachments: Json
+          body: string | null
+          created_at: string
+          event_payload: Json
+          event_type: string | null
+          id: string
+          provider_message_id: string | null
+          role: string
+          session_id: string
+        }
+        Insert: {
+          account_id: string
+          attachments?: Json
+          body?: string | null
+          created_at?: string
+          event_payload?: Json
+          event_type?: string | null
+          id?: string
+          provider_message_id?: string | null
+          role: string
+          session_id: string
+        }
+        Update: {
+          account_id?: string
+          attachments?: Json
+          body?: string | null
+          created_at?: string
+          event_payload?: Json
+          event_type?: string | null
+          id?: string
+          provider_message_id?: string | null
+          role?: string
+          session_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bridge_messages_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "bridge_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bridge_messages_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "bridge_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bridge_pairing_codes: {
+        Row: {
+          account_id: string
+          code_hash: string
+          consumed_at: string | null
+          created_at: string
+          expires_at: string
+          id: string
+        }
+        Insert: {
+          account_id: string
+          code_hash: string
+          consumed_at?: string | null
+          created_at?: string
+          expires_at: string
+          id?: string
+        }
+        Update: {
+          account_id?: string
+          code_hash?: string
+          consumed_at?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bridge_pairing_codes_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "bridge_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bridge_sessions: {
+        Row: {
+          account_id: string
+          activity_at: string
+          created_at: string
+          id: string
+          metadata: Json
+          provider: string
+          provider_session_id: string
+          status: string
+          title: string
+          updated_at: string
+          workspace_path: string | null
+        }
+        Insert: {
+          account_id: string
+          activity_at?: string
+          created_at?: string
+          id?: string
+          metadata?: Json
+          provider?: string
+          provider_session_id: string
+          status?: string
+          title?: string
+          updated_at?: string
+          workspace_path?: string | null
+        }
+        Update: {
+          account_id?: string
+          activity_at?: string
+          created_at?: string
+          id?: string
+          metadata?: Json
+          provider?: string
+          provider_session_id?: string
+          status?: string
+          title?: string
+          updated_at?: string
+          workspace_path?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bridge_sessions_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "bridge_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       counter: {
         Row: {
           id: number
