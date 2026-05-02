@@ -687,24 +687,24 @@ function SignedOut({
   return (
     <section className="relative overflow-hidden">
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/70 to-transparent" />
-      <div className="mx-auto grid min-h-[calc(100vh-73px)] w-full max-w-7xl gap-8 px-5 py-10 sm:px-8 lg:grid-cols-[0.92fr_1.08fr] lg:items-center lg:py-16">
+      <div className="mx-auto grid min-h-[calc(100svh-73px)] w-full max-w-7xl gap-8 px-4 py-8 sm:px-8 sm:py-10 lg:grid-cols-[0.92fr_1.08fr] lg:items-center lg:py-16">
         <div className="relative z-10">
-          <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-sm font-medium text-cyan-200 shadow-[0_0_36px_rgba(34,211,238,0.14)]">
+          <div className="mb-5 inline-flex max-w-full items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-cyan-200 shadow-[0_0_36px_rgba(34,211,238,0.14)] sm:mb-7 sm:text-sm">
             <span className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.95)]" />
             Universal AI bridge for desktop agents
           </div>
-          <h1 className="max-w-4xl text-5xl font-semibold leading-[0.94] tracking-tight text-white sm:text-7xl">
+          <h1 className="max-w-4xl text-[2.65rem] font-semibold leading-[0.96] tracking-tight text-white sm:text-6xl lg:text-7xl">
             Command your local AI agents from anywhere.
           </h1>
-          <p className="mt-6 max-w-2xl text-lg leading-8 text-white/[0.64]">
+          <p className="mt-5 max-w-2xl text-base leading-7 text-white/[0.64] sm:mt-6 sm:text-lg sm:leading-8">
             Bridge Claude, Codex, and future desktop agents into one private web console. Send
             prompts, images, and stop commands from any browser through Supabase while the real work
             stays on your computer.
           </p>
 
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+          <div className="mt-7 flex flex-col gap-3 sm:mt-8 sm:flex-row">
             <Button
-              className="h-14 rounded-2xl bg-cyan-300 px-6 text-base font-semibold text-black shadow-[0_0_34px_rgba(34,211,238,0.32)] hover:bg-cyan-200"
+              className="h-[52px] rounded-2xl bg-cyan-300 px-5 text-sm font-semibold text-black shadow-[0_0_34px_rgba(34,211,238,0.32)] hover:bg-cyan-200 sm:h-14 sm:px-6 sm:text-base"
               onClick={copyInstall}
             >
               {copied === "install" ? (
@@ -715,7 +715,7 @@ function SignedOut({
               {copied === "install" ? "Command copied" : "Copy npm create vlix@latest"}
             </Button>
             <a
-              className="inline-flex h-14 items-center justify-center rounded-2xl border border-white/12 bg-white/[0.06] px-6 text-base font-semibold text-white transition hover:bg-white/[0.1]"
+              className="inline-flex h-[52px] items-center justify-center rounded-2xl border border-white/12 bg-white/[0.06] px-5 text-sm font-semibold text-white transition hover:bg-white/[0.1] sm:h-14 sm:px-6 sm:text-base"
               href="https://www.npmjs.com/package/create-vlix"
               rel="noreferrer"
               target="_blank"
@@ -743,21 +743,21 @@ function SignedOut({
             </p>
           </div>
 
-          <div className="mt-8 grid max-w-2xl grid-cols-3 gap-3">
+          <div className="mt-7 grid max-w-2xl grid-cols-1 gap-3 sm:mt-8 sm:grid-cols-3">
             <LandingMetric label="Agents" value="Claude · Codex" />
             <LandingMetric label="Install" value="1 command" />
             <LandingMetric label="Access" value="Phone + web" />
           </div>
         </div>
 
-        <div className="relative">
-          <div className="absolute -inset-6 rounded-[2.5rem] bg-cyan-400/10 blur-3xl" />
+        <div className="relative mx-auto w-full max-w-[560px] lg:max-w-none">
+          <div className="absolute -inset-4 rounded-[2rem] bg-cyan-400/10 blur-3xl sm:-inset-6 sm:rounded-[2.5rem]" />
           <BridgeConsolePreview />
         </div>
       </div>
 
       <div className="border-y border-white/10 bg-[#0b0b0b]">
-        <div className="mx-auto grid max-w-7xl gap-4 px-5 py-5 sm:px-8 md:grid-cols-4">
+        <div className="mx-auto grid max-w-7xl gap-3 px-4 py-4 sm:grid-cols-2 sm:px-8 sm:py-5 lg:grid-cols-4">
           <FeaturePill icon={ShieldCheck} text="Private account isolation" />
           <FeaturePill icon={MessageSquareText} text="Messages and images" />
           <FeaturePill icon={Zap} text="Stop and queue commands" />
@@ -827,32 +827,34 @@ function RemoteAccessShowcase() {
 
   return (
     <section className="border-b border-white/10 bg-[#101010]">
-      <div className="mx-auto grid max-w-7xl gap-8 px-5 py-12 sm:px-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
+      <div className="mx-auto grid max-w-7xl gap-8 px-4 py-10 sm:px-8 sm:py-12 lg:grid-cols-[0.86fr_1.14fr] lg:items-center lg:py-14">
         <div>
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
             <span className="h-2 w-2 rounded-full bg-cyan-300" />
             Remote mode
           </div>
-          <h2 className="max-w-2xl text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+          <h2 className="max-w-2xl text-3xl font-semibold tracking-tight text-white sm:text-5xl">
             Your phone talks to the website. The website wakes the desktop.
           </h2>
-          <p className="mt-5 max-w-2xl text-base leading-8 text-white/[0.58]">
+          <p className="mt-4 max-w-2xl text-sm leading-7 text-white/[0.58] sm:mt-5 sm:text-base sm:leading-8">
             The phone never needs to find your laptop on Wi-Fi. Messages, images, stop commands,
             and status updates move through the private Supabase relay, then the desktop bridge runs
             the real local agent.
           </p>
 
-          <div className="mt-7 grid gap-3 sm:grid-cols-2">
+          <div className="mt-6 grid gap-3 sm:grid-cols-2 sm:gap-3.5">
             {flow.map(({ icon: Icon, label, value }) => (
               <div
                 key={label}
-                className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3"
+                className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.035] px-3.5 py-3 sm:px-4"
               >
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-cyan-300/12 text-cyan-200">
-                  <Icon className="h-5 w-5" />
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-cyan-300/12 text-cyan-200 sm:h-10 sm:w-10">
+                  <Icon className="h-[18px] w-[18px] sm:h-5 sm:w-5" />
                 </div>
                 <div className="min-w-0">
-                  <div className="text-xs uppercase tracking-[0.2em] text-white/35">{label}</div>
+                  <div className="text-[10px] uppercase tracking-[0.2em] text-white/35 sm:text-xs">
+                    {label}
+                  </div>
                   <div className="mt-1 truncate text-sm font-semibold text-white/82">{value}</div>
                 </div>
               </div>
@@ -860,17 +862,17 @@ function RemoteAccessShowcase() {
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-[390px_1fr] md:items-center">
-          <figure className="mx-auto w-full max-w-[390px]">
+        <div className="grid gap-5 lg:grid-cols-[340px_1fr] xl:grid-cols-[380px_1fr] lg:items-center">
+          <figure className="mx-auto w-full max-w-[280px] sm:max-w-[330px] lg:max-w-[360px] xl:max-w-[390px]">
             <img
               alt="Vlix mobile console running on a phone through the cloud relay"
-              className="h-auto w-full select-none object-contain drop-shadow-[0_44px_80px_rgba(34,211,238,0.13)]"
+              className="h-auto w-full select-none object-contain drop-shadow-[0_34px_70px_rgba(34,211,238,0.13)] sm:drop-shadow-[0_44px_80px_rgba(34,211,238,0.13)]"
               draggable={false}
               src="/vlix-remote-phone.png"
             />
           </figure>
 
-          <div className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
             <RemoteRelayRow
               icon={Smartphone}
               label="1. Send from anywhere"
@@ -901,17 +903,17 @@ function BridgeConsolePreview() {
   ];
 
   return (
-    <div className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-[#070707] shadow-2xl shadow-black/60">
-      <div className="flex items-center justify-between border-b border-white/10 px-4 py-4">
+    <div className="relative overflow-hidden rounded-[1.5rem] border border-white/10 bg-[#070707] shadow-2xl shadow-black/60 sm:rounded-[2rem]">
+      <div className="flex items-center justify-between border-b border-white/10 px-3.5 py-3.5 sm:px-4 sm:py-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-300 to-violet-400 text-black shadow-[0_0_28px_rgba(34,211,238,0.28)]">
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-300 to-violet-400 text-black shadow-[0_0_28px_rgba(34,211,238,0.28)] sm:h-12 sm:w-12">
             <Sparkles className="h-5 w-5" />
           </div>
           <div>
-            <div className="text-lg font-semibold">
+            <div className="text-base font-semibold sm:text-lg">
               Vlix<span className="text-white/45">·console</span>
             </div>
-            <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-white/[0.38]">
+            <div className="mt-1 text-[9px] uppercase tracking-[0.22em] text-white/[0.38] sm:text-[10px] sm:tracking-[0.28em]">
               Universal · phone ⇄ desktop
             </div>
           </div>
@@ -924,8 +926,8 @@ function BridgeConsolePreview() {
         </div>
       </div>
 
-      <div className="grid min-h-[520px] md:grid-cols-[245px_1fr]">
-        <div className="border-r border-white/10 bg-[#0c0c0c] p-4">
+      <div className="grid min-h-[430px] md:min-h-[520px] md:grid-cols-[245px_1fr]">
+        <div className="hidden border-r border-white/10 bg-[#0c0c0c] p-4 md:block">
           <button className="mb-4 flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-left font-semibold">
             <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-cyan-300 text-black">
               <Plus className="h-4 w-4" />
@@ -965,15 +967,19 @@ function BridgeConsolePreview() {
           </div>
         </div>
 
-        <div className="relative flex flex-col bg-[radial-gradient(circle_at_50%_0%,rgba(34,211,238,0.08),transparent_35%)]">
-          <div className="border-b border-white/10 px-5 py-5">
+        <div className="relative flex min-w-0 flex-col bg-[radial-gradient(circle_at_50%_0%,rgba(34,211,238,0.08),transparent_35%)]">
+          <div className="border-b border-white/10 px-4 py-4 sm:px-5 sm:py-5">
             <div className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300">
               Claude · ready
             </div>
-            <div className="mt-2 text-2xl font-semibold">Run the agents already on your Mac.</div>
-            <div className="mt-1 font-mono text-sm text-white/35">/users/home/desktop</div>
+            <div className="mt-2 text-xl font-semibold sm:text-2xl">
+              Run the agents already on your Mac.
+            </div>
+            <div className="mt-1 truncate font-mono text-xs text-white/35 sm:text-sm">
+              /users/home/desktop
+            </div>
           </div>
-          <div className="flex-1 px-5 py-6">
+          <div className="flex-1 px-4 py-5 sm:px-5 sm:py-6">
             <PreviewMessage
               side="left"
               label="assistant"
@@ -984,15 +990,15 @@ function BridgeConsolePreview() {
               label="you"
               text="Send this screenshot to Codex and ask what changed."
             />
-            <div className="my-5 flex items-center gap-3 text-sm text-white/45">
+            <div className="my-5 flex flex-wrap items-center gap-2 text-sm text-white/45 sm:gap-3">
               <span className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_14px_rgba(34,211,238,0.8)]" />
               Working for 18s · reading files · applying patch
               <ArrowRight className="h-4 w-4" />
             </div>
           </div>
-          <div className="p-5">
-            <div className="rounded-[1.6rem] border border-white/10 bg-[#1d1d1d] p-3 shadow-[0_0_45px_rgba(34,211,238,0.11)]">
-              <div className="px-3 py-2 text-white/35">
+          <div className="p-4 sm:p-5">
+            <div className="rounded-[1.35rem] border border-white/10 bg-[#1d1d1d] p-3 shadow-[0_0_45px_rgba(34,211,238,0.11)] sm:rounded-[1.6rem]">
+              <div className="px-2 py-2 text-sm text-white/35 sm:px-3 sm:text-base">
                 Send a prompt to Claude, Codex, or your next agent...
               </div>
               <div className="mt-2 flex items-center justify-between">
@@ -1091,7 +1097,7 @@ function Brand() {
   return (
     <div className="flex items-center gap-3">
       <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-violet-500 text-lg font-semibold text-black">
-        C
+        V
       </div>
       <div>
         <div className="text-lg font-semibold leading-none">Vlix</div>
