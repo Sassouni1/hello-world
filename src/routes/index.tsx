@@ -765,6 +765,8 @@ function SignedOut({
         </div>
       </div>
 
+      <RemoteAccessShowcase />
+
       <div className="mx-auto grid max-w-7xl gap-5 px-5 py-10 sm:px-8 lg:grid-cols-[0.8fr_1.2fr]">
         <Panel title="Launch Vlix">
           <div className="space-y-3">
@@ -809,6 +811,99 @@ function SignedOut({
             label="Control"
             text="Message Claude, Codex, and supported agents from phone, tablet, or browser without LAN access."
           />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function RemoteAccessShowcase() {
+  const flow = [
+    { icon: Smartphone, label: "Phone", value: "vlix1.lovable.app" },
+    { icon: ShieldCheck, label: "Cloud relay", value: "Supabase private account" },
+    { icon: MonitorUp, label: "Desktop bridge", value: "Mac or PC at home" },
+    { icon: Bot, label: "Local agent", value: "Claude, Codex, more" },
+  ];
+
+  return (
+    <section className="border-b border-white/10 bg-[#101010]">
+      <div className="mx-auto grid max-w-7xl gap-8 px-5 py-12 sm:px-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
+        <div>
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">
+            <span className="h-2 w-2 rounded-full bg-cyan-300" />
+            Remote mode
+          </div>
+          <h2 className="max-w-2xl text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+            Your phone talks to the website. The website wakes the desktop.
+          </h2>
+          <p className="mt-5 max-w-2xl text-base leading-8 text-white/[0.58]">
+            The phone never needs to find your laptop on Wi-Fi. Messages, images, stop commands,
+            and status updates move through the private Supabase relay, then the desktop bridge runs
+            the real local agent.
+          </p>
+
+          <div className="mt-7 grid gap-3 sm:grid-cols-2">
+            {flow.map(({ icon: Icon, label, value }) => (
+              <div
+                key={label}
+                className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3"
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-cyan-300/12 text-cyan-200">
+                  <Icon className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs uppercase tracking-[0.2em] text-white/35">{label}</div>
+                  <div className="mt-1 truncate text-sm font-semibold text-white/82">{value}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-[280px_1fr] md:items-center">
+          <div className="mx-auto w-full max-w-[290px] rounded-[2.2rem] border border-white/12 bg-black p-3 shadow-2xl shadow-cyan-950/30">
+            <div className="rounded-[1.7rem] border border-white/10 bg-[#111] p-4">
+              <div className="mb-5 flex items-center justify-between">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.22em] text-cyan-200">Vlix</div>
+                  <div className="mt-1 text-sm text-white/45">Phone console</div>
+                </div>
+                <span className="h-3 w-3 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.95)]" />
+              </div>
+              <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 font-mono text-[11px] text-cyan-100/80">
+                https://vlix1.lovable.app
+              </div>
+              <div className="space-y-3">
+                <PhoneBubble side="right" text="Send this screenshot to Codex and ask what broke." />
+                <PhoneBubble side="left" text="Desktop bridge claimed it. Codex is working now." />
+                <div className="flex items-center gap-2 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Working · reading files
+                </div>
+              </div>
+              <div className="mt-5 rounded-2xl border border-white/10 bg-[#222] px-3 py-3 text-sm text-white/35">
+                Message...
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <RemoteRelayRow
+              icon={Smartphone}
+              label="1. Send from anywhere"
+              text="The phone uses the hosted Vlix website on cellular, office Wi-Fi, or home Wi-Fi."
+            />
+            <RemoteRelayRow
+              icon={ShieldCheck}
+              label="2. Relay through Supabase"
+              text="RLS keeps each user account isolated while queued commands wait for their desktop."
+            />
+            <RemoteRelayRow
+              icon={MonitorUp}
+              label="3. Desktop bridge runs it"
+              text="The local bridge sees the queued command, talks to the desktop agent, and syncs the result back."
+            />
+          </div>
         </div>
       </div>
     </section>
@@ -929,6 +1024,40 @@ function BridgeConsolePreview() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function PhoneBubble({ side, text }: { side: "left" | "right"; text: string }) {
+  return (
+    <div className={`flex ${side === "right" ? "justify-end" : "justify-start"}`}>
+      <div
+        className={`max-w-[82%] rounded-2xl px-3 py-2 text-xs leading-5 ${
+          side === "right" ? "bg-white/[0.12] text-white/88" : "bg-transparent text-white/70"
+        }`}
+      >
+        {text}
+      </div>
+    </div>
+  );
+}
+
+function RemoteRelayRow({
+  icon: Icon,
+  label,
+  text,
+}: {
+  icon: LucideIcon;
+  label: string;
+  text: string;
+}) {
+  return (
+    <div className="rounded-[1.35rem] border border-white/10 bg-black/35 p-4">
+      <div className="flex items-center gap-3 font-semibold text-white">
+        <Icon className="h-4 w-4 text-cyan-200" />
+        {label}
+      </div>
+      <p className="mt-2 text-sm leading-6 text-white/[0.52]">{text}</p>
     </div>
   );
 }
