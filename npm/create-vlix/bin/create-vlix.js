@@ -7,7 +7,7 @@ const passthrough = process.argv.slice(2).filter((arg, index) => {
 });
 
 const runner = process.platform === "win32" ? "npx.cmd" : "npx";
-const child = spawn(runner, ["--yes", "vlix-install", ...passthrough], {
+const child = spawn(runner, ["--yes", "vlix-install@latest", ...passthrough], {
   stdio: "inherit",
 });
 
@@ -18,4 +18,3 @@ child.on("exit", (code, signal) => {
   }
   process.exit(code ?? 0);
 });
-

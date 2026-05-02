@@ -9,7 +9,8 @@ const packageJson = require("./package.json");
 
 const ROOT = __dirname;
 const APP_ASSET_FILES = ["index.html", "app.js", "styles.css"].map((file) => path.join(ROOT, file));
-const PORT = Number(process.env.PORT || 3001);
+const START_PORT = Number(process.env.PORT || 3001);
+let PORT = START_PORT;
 const HOST = process.env.HOST || "0.0.0.0";
 const PACKAGE_NAME = packageJson.name || "codex-remote-bridge";
 const BRIDGE_REPO_URL =
@@ -574,6 +575,26 @@ const openUrl = (url) => {
   const child = spawn(command, args, { detached: true, stdio: "ignore" });
   child.unref();
 };
+
+const probeExistingBridge = (port) =>
+  new Promise((resolve) => {
+    const req = http.get(
+      { hostname: "127.0.0.1", port, path: "/api/app-version", timeout: 700 },
+      (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          body += chunk;
+          if (body.length > 1024) req.destroy();
+        });
+        res.on("end", () => {
+          resolve(res.statusCode === 200 && /"version"\s*:/.test(body));
+        });
+      },
+    );
+    req.on("timeout", () => req.destroy());
+    req.on("error", () => resolve(false));
+  });
 
 const createPairing = async (req, account = ensureBridgeAccount()) => {
   cleanupPairings();
@@ -3752,16 +3773,49 @@ const server = http.createServer(async (req, res) => {
   fs.createReadStream(filePath).pipe(res);
 });
 
-server.listen(PORT, HOST, () => {
+const startServer = () => {
+  server.listen(PORT, HOST, () => {
+    const url = localOrigin();
+    console.log(`Vlix Bridge listening on ${url}`);
+    console.log(`Phone pairing is available from the desktop app at ${url}`);
+    startCloudSync();
+    if (process.env.OPEN_ON_START === "1") {
+      try {
+        openUrl(url);
+      } catch (error) {
+        console.warn(`Unable to open browser automatically: ${error.message}`);
+      }
+    }
+  });
+};
+
+server.on("error", async (error) => {
+  if (error.code !== "EADDRINUSE") {
+    console.error(error);
+    process.exit(1);
+  }
+
   const url = localOrigin();
-  console.log(`Vlix Bridge listening on ${url}`);
-  console.log(`Phone pairing is available from the desktop app at ${url}`);
-  startCloudSync();
-  if (process.env.OPEN_ON_START === "1") {
+  if (await probeExistingBridge(PORT)) {
+    console.log(`Vlix Bridge is already running on ${url}`);
     try {
       openUrl(url);
     } catch (error) {
       console.warn(`Unable to open browser automatically: ${error.message}`);
     }
+    process.exit(0);
   }
+
+  if (PORT < START_PORT + 20) {
+    const occupiedPort = PORT;
+    PORT += 1;
+    console.warn(`Port ${occupiedPort} is already in use; trying ${PORT} instead.`);
+    startServer();
+    return;
+  }
+
+  console.error(`No free port found from ${START_PORT} to ${PORT}.`);
+  process.exit(1);
 });
+
+startServer();
