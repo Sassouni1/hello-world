@@ -424,13 +424,7 @@ function Index() {
 
       {!user ? (
         <SignedOut
-          busy={busy}
           copied={copied}
-          email={email}
-          notice={notice}
-          setEmail={setEmail}
-          signInAnonymously={signInAnonymously}
-          signInWithEmail={signInWithEmail}
           copyInstall={() => copyText("install", installCommand)}
         />
       ) : (
@@ -666,22 +660,10 @@ function Index() {
 }
 
 function SignedOut({
-  busy,
   copied,
-  email,
-  notice,
-  setEmail,
-  signInAnonymously,
-  signInWithEmail,
   copyInstall,
 }: {
-  busy: boolean;
   copied: string;
-  email: string;
-  notice: string;
-  setEmail: (email: string) => void;
-  signInAnonymously: () => void;
-  signInWithEmail: () => void;
   copyInstall: () => void;
 }) {
   return (
@@ -767,34 +749,7 @@ function SignedOut({
 
       <RemoteAccessShowcase />
 
-      <div className="mx-auto grid max-w-7xl gap-5 px-5 py-10 sm:px-8 lg:grid-cols-[0.8fr_1.2fr]">
-        <Panel title="Launch Vlix">
-          <div className="space-y-3">
-            <input
-              className="h-12 w-full rounded-2xl border border-white/10 bg-black px-4 text-white outline-none placeholder:text-white/[0.35]"
-              placeholder="Email for magic link"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-            />
-            <Button
-              className="h-12 w-full rounded-2xl bg-white text-black hover:bg-white/90"
-              disabled={busy}
-              onClick={signInWithEmail}
-            >
-              {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Open console
-            </Button>
-            <Button
-              className="h-12 w-full rounded-2xl bg-white/[0.08] text-white hover:bg-white/[0.12]"
-              disabled={busy}
-              onClick={signInAnonymously}
-            >
-              Try without setup
-            </Button>
-            {notice && <p className="text-sm text-amber-100">{notice}</p>}
-          </div>
-        </Panel>
-
+      <div className="mx-auto max-w-7xl px-4 py-10 sm:px-8">
         <div className="grid gap-4 sm:grid-cols-3">
           <SalesStep
             icon={Terminal}
@@ -821,7 +776,7 @@ function RemoteAccessShowcase() {
   const flow = [
     { icon: Smartphone, label: "Phone", value: "vlix1.lovable.app" },
     { icon: ShieldCheck, label: "Cloud relay", value: "Supabase private account" },
-    { icon: MonitorUp, label: "Desktop bridge", value: "Mac or PC at home" },
+    { icon: MonitorUp, label: "Wake queue", value: "Locked or sleeping Mac/PC" },
     { icon: Bot, label: "Local agent", value: "Claude, Codex, more" },
   ];
 
@@ -885,8 +840,8 @@ function RemoteAccessShowcase() {
             />
             <RemoteRelayRow
               icon={MonitorUp}
-              label="3. Desktop bridge runs it"
-              text="The local bridge sees the queued command, talks to the desktop agent, and syncs the result back."
+              label="3. Wake and run"
+              text="If the computer is locked or asleep, the cloud keeps the command queued until the desktop bridge wakes, reconnects, and runs it."
             />
           </div>
         </div>
