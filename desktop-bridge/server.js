@@ -405,6 +405,8 @@ const allowedLocalApiOrigins = () =>
     "http://127.0.0.1:5173",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:3002",
+    "http://127.0.0.1:3002",
     localOrigin(),
     `http://127.0.0.1:${PORT}`,
   ]);
@@ -440,6 +442,82 @@ const sendLocalApiOptions = (req, res) => {
   res.end();
 };
 
+const localCloudConnectPage = () => `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Connecting Vlix</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #0f0f0f;
+      color: #f5f5f1;
+      font: 15px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      width: min(460px, calc(100vw - 32px));
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 24px;
+      background: #171717;
+      padding: 24px;
+      box-shadow: 0 24px 80px rgba(0,0,0,.38);
+    }
+    .brand { display:flex; align-items:center; gap:12px; font-weight:700; font-size:20px; }
+    .mark { width:40px; height:40px; border-radius:14px; display:grid; place-items:center; color:#050505; background:linear-gradient(135deg,#67e8f9,#8b5cf6); }
+    #status { margin-top: 22px; color: rgba(245,245,241,.7); }
+    .spinner {
+      width: 18px; height: 18px; border-radius: 999px; display:inline-block; vertical-align:-4px; margin-right:10px;
+      border: 2px solid rgba(103,232,249,.25); border-top-color: #67e8f9; animation: spin .8s linear infinite;
+    }
+    pre { white-space: pre-wrap; word-break: break-word; margin: 18px 0 0; color: #fca5a5; font-size: 12px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand"><div class="mark">V</div><div>Vlix desktop bridge</div></div>
+    <div id="status"><span class="spinner"></span>Syncing this computer...</div>
+    <pre id="error" hidden></pre>
+  </main>
+  <script>
+    const statusEl = document.getElementById("status");
+    const errorEl = document.getElementById("error");
+    const params = new URLSearchParams(location.hash.slice(1));
+    const setup = params.get("setup") || "";
+    const returnUrl = params.get("return") || ${JSON.stringify(hostedAppUrl({ connected: "1" }))};
+    const fail = (message) => {
+      statusEl.textContent = "Could not sync this computer.";
+      errorEl.hidden = false;
+      errorEl.textContent = message;
+    };
+    (async () => {
+      if (!setup) {
+        fail("Missing setup payload. Go back to Vlix and click Sync this computer again.");
+        return;
+      }
+      try {
+        const response = await fetch("/api/cloud/connect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ setup })
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || "Local bridge returned " + response.status);
+        statusEl.innerHTML = "This computer is synced. Returning to Vlix...";
+        setTimeout(() => location.replace(returnUrl), 550);
+      } catch (error) {
+        fail(error && error.message ? error.message : String(error));
+      }
+    })();
+  </script>
+</body>
+</html>`;
+
 const hostedAppUrl = (params = {}) => {
   const url = new URL(PUBLIC_APP_URL);
   for (const [key, value] of Object.entries(params)) {
@@ -449,6 +527,8 @@ const hostedAppUrl = (params = {}) => {
   }
   return url.toString();
 };
+
+const hostedDesktopSetupUrl = () => hostedAppUrl({ desktop: "1" });
 
 const sha256Hex = (value) => crypto.createHash("sha256").update(String(value)).digest("hex");
 
@@ -4116,6 +4196,15 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && reqUrl.pathname === "/cloud-connect") {
+    res.writeHead(200, {
+      "Cache-Control": "no-store",
+      "Content-Type": "text/html; charset=utf-8",
+    });
+    res.end(localCloudConnectPage());
+    return;
+  }
+
   const filePath = safePath(reqUrl.pathname);
   if (!filePath) {
     res.writeHead(403);
@@ -4157,12 +4246,13 @@ const server = http.createServer(async (req, res) => {
 const startServer = () => {
   server.listen(PORT, HOST, () => {
     const url = localOrigin();
+    const setupUrl = hostedDesktopSetupUrl();
     console.log(`Vlix Bridge listening on ${url}`);
-    console.log(`Opening hosted Vlix app at ${PUBLIC_APP_URL}`);
+    console.log(`Opening hosted Vlix app at ${setupUrl}`);
     startCloudSync();
     if (process.env.OPEN_ON_START === "1") {
       try {
-        openUrl(PUBLIC_APP_URL);
+        openUrl(setupUrl);
       } catch (error) {
         console.warn(`Unable to open browser automatically: ${error.message}`);
       }
@@ -4178,10 +4268,11 @@ server.on("error", async (error) => {
 
   const url = localOrigin();
   if (await probeExistingBridge(PORT)) {
+    const setupUrl = hostedDesktopSetupUrl();
     console.log(`Vlix Bridge is already running on ${url}`);
-    console.log(`Opening hosted Vlix app at ${PUBLIC_APP_URL}`);
+    console.log(`Opening hosted Vlix app at ${setupUrl}`);
     try {
-      openUrl(PUBLIC_APP_URL);
+      openUrl(setupUrl);
     } catch (error) {
       console.warn(`Unable to open browser automatically: ${error.message}`);
     }

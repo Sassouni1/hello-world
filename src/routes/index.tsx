@@ -64,6 +64,20 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "";
 const initialPairingCode =
   typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("pair") || "";
+const initialDesktopSetup =
+  typeof window !== "undefined" &&
+  (() => {
+    const params = new URLSearchParams(window.location.search);
+    const desktop = (params.get("desktop") || "").toLowerCase();
+    const connected = (params.get("connected") || "").toLowerCase();
+    return (
+      ["1", "true", "desktop"].includes(desktop) || ["1", "true", "desktop"].includes(connected)
+    );
+  })();
+const canProbeLocalBridge =
+  typeof window !== "undefined" &&
+  window.location.protocol === "http:" &&
+  ["localhost", "127.0.0.1"].includes(window.location.hostname);
 
 async function sha256Hex(value: string) {
   const bytes = new TextEncoder().encode(value);
@@ -76,7 +90,9 @@ async function sha256Hex(value: string) {
 function Index() {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [pairingCode, setPairingCode] = useState(initialPairingCode);
+  const [desktopSetupRequested, setDesktopSetupRequested] = useState(initialDesktopSetup);
   const [pairingBusy, setPairingBusy] = useState(false);
   const [email, setEmail] = useState("");
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -105,17 +121,32 @@ function Index() {
   const latestCommand = commands[0] || null;
   const activeDevice = devices.find((device) => device.status === "online") || devices[0] || null;
   const localBridgeConnected =
-    Boolean(localBridge?.cloud?.enabled || localBridge?.cloud?.hasConfig) &&
-    (!activeAccount || localBridge?.cloud?.accountId === activeAccount.id);
+    (Boolean(localBridge?.cloud?.enabled || localBridge?.cloud?.hasConfig) &&
+      (!activeAccount || localBridge?.cloud?.accountId === activeAccount.id)) ||
+    Boolean(activeDevice);
+  const shouldOfferLocalSync = desktopSetupRequested || Boolean(localBridge);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("connected")) {
+      setDesktopSetupRequested(true);
+      setNotice("Local bridge setup finished. Waiting for this computer to check in...");
+      url.searchParams.delete("connected");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  }, []);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setUser(data.session?.user || null);
+      setAuthReady(true);
     });
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
       setUser(nextSession?.user || null);
+      setAuthReady(true);
     });
     return () => data.subscription.unsubscribe();
   }, []);
@@ -141,12 +172,13 @@ function Index() {
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
-      const info = await refreshLocalBridge();
+      const info = canProbeLocalBridge ? await refreshLocalBridge() : null;
       if (cancelled) return;
-      if (!info) return;
+      if (!authReady) return;
+      if (!info && !desktopSetupRequested) return;
       if (!user && !pairingCode && !autoStartedFromBridgeRef.current) {
         autoStartedFromBridgeRef.current = true;
-        void signInAnonymously("Local bridge detected. Creating a private console...");
+        void signInAnonymously("Creating a private console for this desktop...");
       }
     };
     void tick();
@@ -157,7 +189,7 @@ function Index() {
     };
     // This poll intentionally watches the installed local bridge regardless of account state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pairingCode, user]);
+  }, [authReady, desktopSetupRequested, pairingCode, user]);
 
   useEffect(() => {
     if (!user) {
@@ -174,13 +206,13 @@ function Index() {
   }, [user]);
 
   useEffect(() => {
-    if (!pairingCode || user || pairingBusy) return;
+    if (!authReady || !pairingCode || user || pairingBusy) return;
     setPairingBusy(true);
     supabase.auth.signInAnonymously().then(({ error }) => {
       if (error) setNotice(error.message);
       setPairingBusy(false);
     });
-  }, [pairingBusy, pairingCode, user]);
+  }, [authReady, pairingBusy, pairingCode, user]);
 
   useEffect(() => {
     if (!pairingCode || !user || pairingBusy) return;
@@ -390,7 +422,7 @@ function Index() {
 
   const createPairingCode = async () => {
     if (!activeAccount) return;
-    if (localBridgeConnected) {
+    if (localBridge && localBridgeConnected) {
       try {
         const response = await fetch(`${localBridgeUrl}/api/pairing/start`, {
           method: "POST",
@@ -444,6 +476,21 @@ function Index() {
     }
     const payload = BufferSafe.btoa(JSON.stringify(bridgeSetup));
     setSetupPayload(payload);
+    const openHandoff = () => {
+      const returnUrl = new URL(window.location.origin);
+      returnUrl.searchParams.set("connected", "1");
+      const handoff = new URL(`${localBridgeUrl}/cloud-connect`);
+      handoff.hash = new URLSearchParams({
+        setup: payload,
+        return: returnUrl.toString(),
+      }).toString();
+      setNotice("Opening the local bridge handoff...");
+      window.location.href = handoff.toString();
+    };
+    if (!localBridge) {
+      openHandoff();
+      return;
+    }
     setSyncingComputer(true);
     try {
       const response = await fetch(`${localBridgeUrl}/api/cloud/connect`, {
@@ -459,12 +506,8 @@ function Index() {
       setNotice("This computer is synced. Phone pairing can now use the hosted Vlix URL.");
       await refreshLocalBridge();
       if (activeAccount) await refreshBridgeData(activeAccount.id);
-    } catch (error) {
-      setNotice(
-        `Could not sync this computer from the browser. Copy the terminal fallback instead. ${
-          error instanceof Error ? error.message : ""
-        }`.trim(),
-      );
+    } catch {
+      openHandoff();
     } finally {
       setSyncingComputer(false);
     }
@@ -589,9 +632,9 @@ function Index() {
             </>
           ) : (
             <StatusPill
-              icon={localBridge ? MonitorUp : ShieldCheck}
-              label={localBridge ? "Bridge detected" : "Ready"}
-              active={Boolean(localBridge)}
+              icon={shouldOfferLocalSync ? MonitorUp : ShieldCheck}
+              label={shouldOfferLocalSync ? "Desktop setup" : "Ready"}
+              active={shouldOfferLocalSync}
             />
           )}
         </div>
@@ -604,6 +647,7 @@ function Index() {
           localBridge={localBridge}
           localBridgeError={localBridgeError}
           notice={notice}
+          shouldOfferLocalSync={shouldOfferLocalSync}
           copyInstall={() => copyText("install", installCommand)}
           startConsole={() => void signInAnonymously("Creating a private console...")}
         />
@@ -760,7 +804,7 @@ function Index() {
                   Sync the local bridge running on this computer. After it checks in, your phone can
                   use this hosted website from any network.
                 </p>
-                {localBridge ? (
+                {shouldOfferLocalSync ? (
                   <Button
                     className="w-full rounded-2xl bg-sky-400 text-black hover:bg-sky-300"
                     disabled={syncingComputer || localBridgeConnected}
@@ -777,8 +821,8 @@ function Index() {
                   </Button>
                 ) : (
                   <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white/48">
-                    Local bridge not detected yet. Run the npm installer on this computer, then
-                    come back to this page.
+                    Run the npm installer on this computer. It will reopen this site in desktop
+                    setup mode.
                   </div>
                 )}
                 <Button
@@ -897,6 +941,7 @@ function SignedOut({
   localBridge,
   localBridgeError,
   notice,
+  shouldOfferLocalSync,
   copyInstall,
   startConsole,
 }: {
@@ -905,6 +950,7 @@ function SignedOut({
   localBridge: LocalBridgeInfo | null;
   localBridgeError: string;
   notice: string;
+  shouldOfferLocalSync: boolean;
   copyInstall: () => void;
   startConsole: () => void;
 }) {
@@ -937,7 +983,7 @@ function SignedOut({
               ) : (
                 <MonitorUp className="mr-2 h-5 w-5" />
               )}
-              {localBridge ? "Open console and sync" : "Start web console"}
+              {shouldOfferLocalSync ? "Open console and sync" : "Start web console"}
             </Button>
             <Button
               className="h-[52px] rounded-2xl bg-cyan-300 px-5 text-sm font-semibold text-black shadow-[0_0_34px_rgba(34,211,238,0.32)] hover:bg-cyan-200 sm:h-14 sm:px-6 sm:text-base"
@@ -964,20 +1010,20 @@ function SignedOut({
           <div className="mt-4 flex max-w-2xl flex-col gap-2 text-sm sm:flex-row sm:items-center">
             <span
               className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 ${
-                localBridge
+                shouldOfferLocalSync
                   ? "border-emerald-300/25 bg-emerald-300/10 text-emerald-100"
                   : "border-white/10 bg-white/[0.04] text-white/45"
               }`}
             >
               <span
                 className={`h-2 w-2 rounded-full ${
-                  localBridge ? "bg-emerald-300" : "bg-white/25"
+                  shouldOfferLocalSync ? "bg-emerald-300" : "bg-white/25"
                 }`}
               />
-              {localBridge ? "Local bridge detected" : "Waiting for local bridge"}
+              {shouldOfferLocalSync ? "Desktop setup ready" : "Waiting for local bridge"}
             </span>
             {notice && <span className="text-white/50">{notice}</span>}
-            {!localBridge && localBridgeError && (
+            {!shouldOfferLocalSync && localBridgeError && (
               <span className="text-white/35">Run the installer, then this will switch on.</span>
             )}
           </div>
