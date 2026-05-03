@@ -797,8 +797,6 @@ function RemoteAccessShowcase() {
             the real local agent.
           </p>
 
-          <WakeComputerAnimation />
-
           <div className="mt-6 grid gap-3 sm:grid-cols-2 sm:gap-3.5">
             {flow.map(({ icon: Icon, label, value }) => (
               <div
@@ -817,6 +815,8 @@ function RemoteAccessShowcase() {
               </div>
             ))}
           </div>
+
+          <WakeComputerAnimation />
         </div>
 
         <div className="grid gap-5 lg:grid-cols-[340px_1fr] xl:grid-cols-[380px_1fr] lg:items-center">
@@ -926,10 +926,10 @@ function WakeComputerAnimation() {
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-cyan-200">
-            Wake demo
+            Also handles wake queues
           </div>
           <div className="mt-1 text-sm font-semibold text-white/86">
-            Phone request turns into a desktop wake queue.
+            If your computer is locked or asleep, Vlix keeps the request waiting.
           </div>
         </div>
         <div className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-xs font-semibold text-cyan-100">
