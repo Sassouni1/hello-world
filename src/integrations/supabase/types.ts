@@ -347,6 +347,10 @@ export type Database = {
         Args: { target_account_id: string }
         Returns: boolean
       }
+      create_bridge_account: {
+        Args: { display_name?: string }
+        Returns: Database["public"]["Tables"]["bridge_accounts"]["Row"]
+      }
       consume_bridge_pairing_code: {
         Args: { pairing_code: string }
         Returns: string

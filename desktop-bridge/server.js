@@ -44,6 +44,7 @@ const ACTIVE_MTIME_FALLBACK_MS = 8_000;
 const CHAT_LIST_CACHE_MS = 1500;
 const CHAT_DETAIL_TAIL_BYTES = Number(process.env.CHAT_DETAIL_TAIL_BYTES || 4 * 1024 * 1024);
 const CLOUD_POLL_MS = Number(process.env.VLIX_CLOUD_POLL_MS || 2200);
+const CLOUD_SESSION_SYNC_MS = Number(process.env.VLIX_CLOUD_SESSION_SYNC_MS || 15_000);
 const normalizePublicAppUrl = (value) => {
   const raw = String(value || "").trim() || "https://vlix1.lovable.app";
   try {
@@ -70,6 +71,8 @@ let cloudSyncState = {
   deviceId: "",
   accountId: "",
 };
+let cloudSyncTimer = null;
+let cloudSessionSyncAt = 0;
 
 const appAssetVersion = () => {
   const source = APP_ASSET_FILES.map((file) => {
@@ -379,6 +382,64 @@ const pairingOrigin = (req) => {
 
 const localOrigin = () => `http://localhost:${PORT}`;
 
+const hostedAppOrigin = () => {
+  try {
+    return new URL(PUBLIC_APP_URL).origin;
+  } catch {
+    return "https://vlix1.lovable.app";
+  }
+};
+
+const LOCAL_CLOUD_API_PATHS = new Set([
+  "/api/bridge/info",
+  "/api/cloud/status",
+  "/api/cloud/connect",
+  "/api/pairing/start",
+]);
+
+const allowedLocalApiOrigins = () =>
+  new Set([
+    hostedAppOrigin(),
+    "https://vlix1.lovable.app",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    localOrigin(),
+    `http://127.0.0.1:${PORT}`,
+  ]);
+
+const localApiCorsHeaders = (req) => {
+  const origin = String(req.headers.origin || "").trim();
+  if (!origin || !allowedLocalApiOrigins().has(origin)) return null;
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Private-Network": "true",
+    "Access-Control-Max-Age": "600",
+    Vary: "Origin, Access-Control-Request-Method, Access-Control-Request-Private-Network",
+  };
+};
+
+const sendLocalApi = (req, res, statusCode, payload, headers = {}) => {
+  const corsHeaders = localApiCorsHeaders(req) || {};
+  send(res, statusCode, payload, { ...corsHeaders, ...headers });
+};
+
+const sendLocalApiOptions = (req, res) => {
+  const headers = localApiCorsHeaders(req);
+  if (!headers) {
+    send(res, 403, { error: "Origin is not allowed for local bridge setup." });
+    return;
+  }
+  res.writeHead(204, {
+    "Cache-Control": "no-store",
+    ...headers,
+  });
+  res.end();
+};
+
 const hostedAppUrl = (params = {}) => {
   const url = new URL(PUBLIC_APP_URL);
   for (const [key, value] of Object.entries(params)) {
@@ -587,6 +648,10 @@ const bridgeInfo = (req, account = readBridgeAccount()) => ({
   phoneUrl: PUBLIC_APP_URL,
   account: publicBridgeAccount(account),
   appServer: codexAppServer.status,
+  cloud: {
+    ...cloudSyncState,
+    hasConfig: Boolean(cloudConfig()),
+  },
   install: {
     npm: "npm create vlix@latest",
     github: `npx ${githubNpxTarget()}`,
@@ -2965,6 +3030,12 @@ const cloudConfig = () => {
   return config;
 };
 
+const cloudConfigFromConnectPayload = (body = {}) => {
+  const setup = decodeBridgeSetup(body.setup || body.payload || body.VLIX_BRIDGE_SETUP);
+  const config = mergeCloudConfig(setup, body.config, body);
+  return hasCompleteCloudConfig(config) ? config : null;
+};
+
 const cloudHeaders = (config, extra = {}) => ({
   apikey: config.supabaseAnonKey,
   Authorization: `Bearer ${config.accessToken}`,
@@ -3102,6 +3173,98 @@ const cloudInsertMessage = (config, body) =>
     body,
   });
 
+const cloudUpsertSessions = (config, rows) =>
+  cloudTable(config, "bridge_sessions", "on_conflict=account_id,provider,provider_session_id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+    body: rows,
+  });
+
+const cloudUpsertMessages = (config, rows) =>
+  cloudTable(
+    config,
+    "bridge_messages",
+    "on_conflict=account_id,session_id,provider_message_id",
+    {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: rows,
+    },
+  );
+
+const chunksOf = (items, size) => {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
+  return chunks;
+};
+
+const syncLocalSessionsToCloud = async (config, account, options = {}) => {
+  const chats = listChatsForAccount(account, { force: true }).slice(0, options.limit || 240);
+  if (!chats.length) return { sessions: 0, messages: 0 };
+  const sessionRows = chats.map((chat) => ({
+    account_id: config.accountId,
+    provider: "codex",
+    provider_session_id: chat.id,
+    title: compact(chat.title || chat.preview || chat.id, 90) || "Untitled chat",
+    workspace_path: chat.cwd || null,
+    status: chat.observedWorking ? "working" : "idle",
+    activity_at: chat.activityAt || chat.updatedAt || new Date().toISOString(),
+    updated_at: chat.activityAt || chat.updatedAt || new Date().toISOString(),
+    metadata: {
+      localAccountId: account.accountId,
+      folder: chat.folder || "",
+      folderLabel: chat.folderLabel || "",
+      projectKey: chat.projectKey || "",
+      projectLabel: chat.projectLabel || "",
+      messageCount: chat.messageCount || 0,
+    },
+  }));
+
+  const upserted = [];
+  for (const chunk of chunksOf(sessionRows, 80)) {
+    const rows = await cloudUpsertSessions(config, chunk);
+    if (Array.isArray(rows)) upserted.push(...rows);
+  }
+
+  const cloudSessionByProviderId = new Map(
+    upserted.map((row) => [String(row.provider_session_id || ""), row]),
+  );
+  const messageRows = [];
+  for (const chat of chats.slice(0, options.messageChatLimit || 36)) {
+    const cloudSession = cloudSessionByProviderId.get(chat.id);
+    if (!cloudSession?.id) continue;
+    const indexed = getIndexedChat(chat.id);
+    const messages = indexed?.parsed?.messages || [];
+    for (const message of messages.slice(-(options.messagesPerChat || 60))) {
+      if (!["user", "assistant", "system", "tool", "event"].includes(message.role)) continue;
+      messageRows.push({
+        account_id: config.accountId,
+        session_id: cloudSession.id,
+        role: message.role,
+        body: message.text || "",
+        event_type: null,
+        event_payload: {
+          source: message.source || "desktop",
+          phase: message.phase || null,
+        },
+        attachments: [],
+        provider_message_id: `codex:${chat.id}:${message.id}`,
+        created_at: message.timestamp || chat.activityAt || new Date().toISOString(),
+      });
+    }
+  }
+
+  for (const chunk of chunksOf(messageRows, 200)) {
+    try {
+      await cloudUpsertMessages(config, chunk);
+    } catch (error) {
+      console.warn(`Vlix cloud message history sync skipped: ${error.message}`);
+      break;
+    }
+  }
+  return { sessions: chats.length, messages: messageRows.length };
+};
+
 const storageObjectUrl = (config, bucket, objectPath) =>
   cloudUrl(
     config,
@@ -3222,6 +3385,16 @@ const processCloudCommand = async (config, command) => {
 };
 
 const pollCloudCommands = async (config) => {
+  let account = readBridgeAccount();
+  if (!isBridgeAccountIntegrated(account)) {
+    await codexAppServer.ensure();
+    account = connectBridgeAccount();
+  }
+  account = syncBridgeAccountFromCodex(account);
+  if (Date.now() - cloudSessionSyncAt > CLOUD_SESSION_SYNC_MS) {
+    await syncLocalSessionsToCloud(config, account);
+    cloudSessionSyncAt = Date.now();
+  }
   const deviceId = await cloudUpsertDevice(config);
   cloudSyncState.enabled = true;
   cloudSyncState.lastPollAt = new Date().toISOString();
@@ -3246,6 +3419,10 @@ const pollCloudCommands = async (config) => {
 };
 
 const startCloudSync = () => {
+  if (cloudSyncTimer) {
+    clearInterval(cloudSyncTimer);
+    cloudSyncTimer = null;
+  }
   const config = cloudConfig();
   if (!config) {
     cloudSyncState = {
@@ -3276,7 +3453,7 @@ const startCloudSync = () => {
     }
   };
   tick();
-  setInterval(tick, CLOUD_POLL_MS);
+  cloudSyncTimer = setInterval(tick, CLOUD_POLL_MS);
 };
 
 const handleScreenshot = async (req, res, reqUrl) => {
@@ -3329,13 +3506,77 @@ const launchVisibleBrowser = async (req, res) => {
 };
 
 const routeApi = async (req, res, reqUrl) => {
+  if (req.method === "OPTIONS" && LOCAL_CLOUD_API_PATHS.has(reqUrl.pathname)) {
+    sendLocalApiOptions(req, res);
+    return true;
+  }
+
   if (req.method === "GET" && reqUrl.pathname === "/api/app-version") {
     send(res, 200, { version: appAssetVersion() });
     return true;
   }
 
   if (req.method === "GET" && reqUrl.pathname === "/api/cloud/status") {
-    send(res, 200, { cloud: cloudSyncState });
+    sendLocalApi(req, res, 200, { cloud: { ...cloudSyncState, hasConfig: Boolean(cloudConfig()) } });
+    return true;
+  }
+
+  if (req.method === "GET" && reqUrl.pathname === "/api/bridge/info") {
+    sendLocalApi(req, res, 200, bridgeInfo(req, readBridgeAccount()));
+    return true;
+  }
+
+  if (req.method === "POST" && reqUrl.pathname === "/api/cloud/connect") {
+    if (!isLoopbackRequest(req)) {
+      sendLocalApi(req, res, 403, { error: "Cloud setup can only be accepted by this computer." });
+      return true;
+    }
+    if (req.headers.origin && !localApiCorsHeaders(req)) {
+      send(res, 403, { error: "Origin is not allowed for local bridge setup." });
+      return true;
+    }
+    const body = await readBody(req);
+    const config = cloudConfigFromConnectPayload(body);
+    if (!config) {
+      sendLocalApi(req, res, 400, {
+        error: "Provide a valid VLIX_BRIDGE_SETUP payload or cloud config.",
+      });
+      return true;
+    }
+    let syncedAccount;
+    try {
+      await codexAppServer.ensure();
+      syncedAccount = syncBridgeAccountFromCodex(connectBridgeAccount());
+      await cloudUpsertDevice(config);
+      await syncLocalSessionsToCloud(config, syncedAccount, {
+        limit: 240,
+        messageChatLimit: 36,
+        messagesPerChat: 60,
+      });
+      cloudSessionSyncAt = Date.now();
+    } catch (error) {
+      cloudSyncState = {
+        enabled: false,
+        lastPollAt: null,
+        lastError: error.message || "Could not connect cloud bridge.",
+        deviceId: "",
+        accountId: config.accountId || "",
+      };
+      sendLocalApi(req, res, 502, {
+        ok: false,
+        error: cloudSyncState.lastError,
+        cloud: { ...cloudSyncState, hasConfig: false },
+      });
+      return true;
+    }
+    saveCloudConfig(config);
+    startCloudSync();
+    sendLocalApi(req, res, 200, {
+      ok: true,
+      cloud: { ...cloudSyncState, hasConfig: true },
+      account: publicBridgeAccount(syncedAccount),
+      info: bridgeInfo(req, syncedAccount),
+    });
     return true;
   }
 
@@ -3354,12 +3595,12 @@ const routeApi = async (req, res, reqUrl) => {
 
   if (req.method === "POST" && reqUrl.pathname === "/api/pairing/start") {
     if (!isLoopbackRequest(req)) {
-      send(res, 403, { error: "Start phone pairing from the desktop console." });
+      sendLocalApi(req, res, 403, { error: "Start phone pairing from the desktop console." });
       return true;
     }
     const account = ensureBridgeAccount();
     if (!isBridgeAccountIntegrated(account)) {
-      send(res, 409, {
+      sendLocalApi(req, res, 409, {
         error:
           "This bridge account is not integrated with a desktop yet. Save it as a test account, then connect a desktop bridge before pairing a phone.",
         account: publicBridgeAccount(account),
@@ -3371,10 +3612,10 @@ const routeApi = async (req, res, reqUrl) => {
     try {
       pairing = await createPairing(req, syncedAccount);
     } catch (error) {
-      send(res, 409, { error: error.message || "Phone pairing is unavailable." });
+      sendLocalApi(req, res, 409, { error: error.message || "Phone pairing is unavailable." });
       return true;
     }
-    send(res, 200, {
+    sendLocalApi(req, res, 200, {
       token: pairing.token,
       url: pairing.url,
       qr: pairing.qr,
@@ -3444,7 +3685,7 @@ const routeApi = async (req, res, reqUrl) => {
   }
 
   if (req.method === "GET" && reqUrl.pathname === "/api/bridge/info") {
-    send(res, 200, bridgeInfo(req, account));
+    sendLocalApi(req, res, 200, bridgeInfo(req, account));
     return true;
   }
 

@@ -8,7 +8,6 @@ import {
   Copy,
   ImagePlus,
   Loader2,
-  LockKeyhole,
   MessageSquareText,
   MonitorUp,
   Plus,
@@ -44,8 +43,23 @@ type BridgeAttachment = {
   type: string;
   size: number;
 };
+type LocalBridgeInfo = {
+  name?: string;
+  version?: string;
+  localUrl?: string;
+  phoneUrl?: string;
+  cloud?: {
+    enabled?: boolean;
+    hasConfig?: boolean;
+    lastPollAt?: string | null;
+    lastError?: string;
+    deviceId?: string;
+    accountId?: string;
+  };
+};
 
 const installCommand = "npm create vlix@latest";
+const localBridgeUrl = "http://127.0.0.1:3001";
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "";
 const initialPairingCode =
@@ -78,12 +92,21 @@ function Index() {
   const [copied, setCopied] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [localBridge, setLocalBridge] = useState<LocalBridgeInfo | null>(null);
+  const [localBridgeError, setLocalBridgeError] = useState("");
+  const [syncingComputer, setSyncingComputer] = useState(false);
+  const [pairingUrl, setPairingUrl] = useState("");
+  const [pairingQr, setPairingQr] = useState("");
+  const autoStartedFromBridgeRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeAccount = accounts.find((account) => account.id === activeAccountId) || null;
   const selectedSession = sessions.find((item) => item.id === selectedSessionId) || null;
   const latestCommand = commands[0] || null;
   const activeDevice = devices.find((device) => device.status === "online") || devices[0] || null;
+  const localBridgeConnected =
+    Boolean(localBridge?.cloud?.enabled || localBridge?.cloud?.hasConfig) &&
+    (!activeAccount || localBridge?.cloud?.accountId === activeAccount.id);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -97,6 +120,45 @@ function Index() {
     return () => data.subscription.unsubscribe();
   }, []);
 
+  const refreshLocalBridge = async () => {
+    try {
+      const response = await fetch(`${localBridgeUrl}/api/bridge/info`, {
+        cache: "no-store",
+        mode: "cors",
+      });
+      if (!response.ok) throw new Error(`Local bridge returned ${response.status}`);
+      const info = (await response.json()) as LocalBridgeInfo;
+      setLocalBridge(info);
+      setLocalBridgeError("");
+      return info;
+    } catch (error) {
+      setLocalBridge(null);
+      setLocalBridgeError(error instanceof Error ? error.message : "Local bridge not detected.");
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      const info = await refreshLocalBridge();
+      if (cancelled) return;
+      if (!info) return;
+      if (!user && !pairingCode && !autoStartedFromBridgeRef.current) {
+        autoStartedFromBridgeRef.current = true;
+        void signInAnonymously("Local bridge detected. Creating a private console...");
+      }
+    };
+    void tick();
+    const timer = window.setInterval(tick, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+    // This poll intentionally watches the installed local bridge regardless of account state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pairingCode, user]);
+
   useEffect(() => {
     if (!user) {
       setAccounts([]);
@@ -106,7 +168,7 @@ function Index() {
       setCommands([]);
       return;
     }
-    void loadAccounts(user.id);
+    void loadAccounts();
     // loadAccounts is intentionally tied to the authenticated user changing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
@@ -141,7 +203,7 @@ function Index() {
         url.searchParams.delete("pair");
         url.searchParams.delete("phone");
         window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-        await loadAccounts(user.id);
+        await loadAccounts();
         if (accountId) setActiveAccountId(accountId);
       } finally {
         if (!cancelled) setPairingBusy(false);
@@ -240,7 +302,8 @@ function Index() {
     setNotice(error ? error.message : "Check your email for the login link.");
   };
 
-  const signInAnonymously = async () => {
+  const signInAnonymously = async (pendingNotice = "") => {
+    if (pendingNotice) setNotice(pendingNotice);
     setBusy(true);
     const { error } = await supabase.auth.signInAnonymously();
     setBusy(false);
@@ -252,7 +315,7 @@ function Index() {
     setNotice("");
   };
 
-  const loadAccounts = async (ownerUserId: string) => {
+  const loadAccounts = async () => {
     const { data, error } = await supabase
       .from("bridge_accounts")
       .select("*")
@@ -262,23 +325,23 @@ function Index() {
       return;
     }
     if (!data.length && !pairingCode) {
-      const created = await createAccount(ownerUserId);
+      const created = await createAccount();
       if (created) return;
     }
     setAccounts(data);
     setActiveAccountId((current) => current || data[0]?.id || "");
   };
 
-  const createAccount = async (ownerUserId = user?.id) => {
-    if (!ownerUserId) return null;
-    const { data, error } = await supabase.rpc("create_bridge_account", {
-      display_name: "Personal console",
-    });
+  const createAccount = async () => {
+    if (!user) return null;
+    const { data, error } = await supabase
+      .rpc("create_bridge_account", { display_name: "Personal console" });
     if (error) {
       setNotice(error.message);
       return null;
     }
-    const account = data as Account;
+    const account = data as Account | null;
+    if (!account) return null;
     setAccounts((current) => [...current, account]);
     setActiveAccountId(account.id);
     return account;
@@ -327,6 +390,27 @@ function Index() {
 
   const createPairingCode = async () => {
     if (!activeAccount) return;
+    if (localBridgeConnected) {
+      try {
+        const response = await fetch(`${localBridgeUrl}/api/pairing/start`, {
+          method: "POST",
+          mode: "cors",
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || `Local bridge returned ${response.status}`);
+        setPairingUrl(body.url || "");
+        setPairingQr(body.qr || "");
+        if (body.url) await copyText("pairing", body.url);
+        setNotice("Phone pairing link copied. It opens the hosted Vlix site from any network.");
+        return;
+      } catch (error) {
+        setNotice(
+          `Could not ask the local bridge for a QR. ${
+            error instanceof Error ? error.message : ""
+          }`.trim(),
+        );
+      }
+    }
     const code = crypto.randomUUID().replace(/-/g, "");
     const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
     const { error } = await supabase.from("bridge_pairing_codes").insert({
@@ -338,14 +422,52 @@ function Index() {
       setNotice(error.message);
       return;
     }
-    await copyText("pairing", code);
-    setNotice("Pairing code copied. It expires in 15 minutes.");
+    const url = new URL(window.location.origin);
+    url.searchParams.set("pair", code);
+    url.searchParams.set("phone", "1");
+    setPairingUrl(url.toString());
+    setPairingQr("");
+    await copyText("pairing", url.toString());
+    setNotice("Phone pairing link copied. It expires in 15 minutes.");
   };
 
   const revealSetupPayload = () => {
     if (!bridgeSetup) return;
     const payload = BufferSafe.btoa(JSON.stringify(bridgeSetup));
     setSetupPayload(payload);
+  };
+
+  const connectLocalBridge = async () => {
+    if (!bridgeSetup) {
+      setNotice("Start the web console first, then sync this computer.");
+      return;
+    }
+    const payload = BufferSafe.btoa(JSON.stringify(bridgeSetup));
+    setSetupPayload(payload);
+    setSyncingComputer(true);
+    try {
+      const response = await fetch(`${localBridgeUrl}/api/cloud/connect`, {
+        method: "POST",
+        mode: "cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ setup: payload }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(body.error || `Local bridge returned ${response.status}`);
+      }
+      setNotice("This computer is synced. Phone pairing can now use the hosted Vlix URL.");
+      await refreshLocalBridge();
+      if (activeAccount) await refreshBridgeData(activeAccount.id);
+    } catch (error) {
+      setNotice(
+        `Could not sync this computer from the browser. Copy the terminal fallback instead. ${
+          error instanceof Error ? error.message : ""
+        }`.trim(),
+      );
+    } finally {
+      setSyncingComputer(false);
+    }
   };
 
   const uploadFiles = async (files: File[]): Promise<BridgeAttachment[]> => {
@@ -466,17 +588,24 @@ function Index() {
               </Button>
             </>
           ) : (
-            <StatusPill icon={LockKeyhole} label="Sign in required" />
+            <StatusPill
+              icon={localBridge ? MonitorUp : ShieldCheck}
+              label={localBridge ? "Bridge detected" : "Ready"}
+              active={Boolean(localBridge)}
+            />
           )}
         </div>
       </header>
 
       {!user ? (
         <SignedOut
+          busy={busy || pairingBusy}
           copied={copied}
+          localBridge={localBridge}
+          localBridgeError={localBridgeError}
+          notice={notice}
           copyInstall={() => copyText("install", installCommand)}
-          onStartConsole={() => void signInAnonymously()}
-          starting={busy || pairingBusy}
+          startConsole={() => void signInAnonymously("Creating a private console...")}
         />
       ) : (
         <section className="grid min-h-[calc(100vh-73px)] grid-cols-1 lg:grid-cols-[360px_1fr_420px]">
@@ -628,15 +757,36 @@ function Index() {
             <Panel title="Desktop bridge">
               <div className="space-y-3">
                 <p className="text-sm leading-6 text-white/50">
-                  Run the cloud command on the computer with your desktop agents. After it checks
-                  in, your phone can use this website from any network.
+                  Sync the local bridge running on this computer. After it checks in, your phone can
+                  use this hosted website from any network.
                 </p>
+                {localBridge ? (
+                  <Button
+                    className="w-full rounded-2xl bg-sky-400 text-black hover:bg-sky-300"
+                    disabled={syncingComputer || localBridgeConnected}
+                    onClick={connectLocalBridge}
+                  >
+                    {syncingComputer ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : localBridgeConnected ? (
+                      <CircleCheck className="mr-2 h-4 w-4" />
+                    ) : (
+                      <MonitorUp className="mr-2 h-4 w-4" />
+                    )}
+                    {localBridgeConnected ? "This computer is synced" : "Sync this computer"}
+                  </Button>
+                ) : (
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white/48">
+                    Local bridge not detected yet. Run the npm installer on this computer, then
+                    come back to this page.
+                  </div>
+                )}
                 <Button
-                  className="w-full rounded-2xl bg-sky-400 text-black hover:bg-sky-300"
+                  className="w-full rounded-2xl bg-white/[0.08] text-white hover:bg-white/[0.12]"
                   onClick={revealSetupPayload}
                 >
                   <Terminal className="mr-2 h-4 w-4" />
-                  Generate cloud connect command
+                  Copy terminal fallback
                 </Button>
                 {setupPayload && (
                   <CommandBox
@@ -653,8 +803,8 @@ function Index() {
                   Copy base installer
                 </Button>
                 <p className="text-xs leading-5 text-white/38">
-                  The base installer only launches Vlix locally. The cloud command above is what
-                  binds this desktop to your Supabase account.
+                  If the browser blocks localhost setup, paste the fallback command into Terminal.
+                  The QR code uses the hosted Vlix URL after this computer is synced.
                 </p>
               </div>
             </Panel>
@@ -676,6 +826,37 @@ function Index() {
                   <p className="text-sm text-white/45">No desktop bridge has checked in yet.</p>
                 )}
               </div>
+            </Panel>
+
+            <Panel title="Phone access">
+              {localBridgeConnected ? (
+                <div className="space-y-3">
+                  <Button
+                    className="w-full rounded-2xl bg-white text-black hover:bg-white/90"
+                    onClick={createPairingCode}
+                  >
+                    <QrCode className="mr-2 h-4 w-4" />
+                    Pair phone
+                  </Button>
+                  {pairingQr && (
+                    <img
+                      alt="Vlix phone pairing QR"
+                      className="mx-auto w-44 rounded-2xl border border-white/10 bg-white p-2"
+                      src={pairingQr}
+                    />
+                  )}
+                  {pairingUrl && (
+                    <div className="break-all rounded-2xl border border-white/10 bg-black/35 p-3 text-xs text-white/55">
+                      {pairingUrl}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm leading-6 text-white/45">
+                  Sync this computer first. Then phone pairing will create a hosted Vlix link, not a
+                  local Wi-Fi URL.
+                </p>
+              )}
             </Panel>
 
             <Panel title="Queue">
@@ -711,15 +892,21 @@ function Index() {
 }
 
 function SignedOut({
+  busy,
   copied,
+  localBridge,
+  localBridgeError,
+  notice,
   copyInstall,
-  onStartConsole,
-  starting,
+  startConsole,
 }: {
+  busy: boolean;
   copied: string;
+  localBridge: LocalBridgeInfo | null;
+  localBridgeError: string;
+  notice: string;
   copyInstall: () => void;
-  onStartConsole: () => void;
-  starting: boolean;
+  startConsole: () => void;
 }) {
   return (
     <section className="relative overflow-hidden">
@@ -742,15 +929,15 @@ function SignedOut({
           <div className="mt-7 flex flex-col gap-3 sm:mt-8 sm:flex-row">
             <Button
               className="h-[52px] rounded-2xl bg-white px-5 text-sm font-semibold text-black hover:bg-white/90 sm:h-14 sm:px-6 sm:text-base"
-              onClick={onStartConsole}
-              disabled={starting}
+              disabled={busy}
+              onClick={startConsole}
             >
-              {starting ? (
+              {busy ? (
                 <Loader2 className="mr-2 h-5 w-5 animate-spin" />
               ) : (
-                <Sparkles className="mr-2 h-5 w-5" />
+                <MonitorUp className="mr-2 h-5 w-5" />
               )}
-              Start web console
+              {localBridge ? "Open console and sync" : "Start web console"}
             </Button>
             <Button
               className="h-[52px] rounded-2xl bg-cyan-300 px-5 text-sm font-semibold text-black shadow-[0_0_34px_rgba(34,211,238,0.32)] hover:bg-cyan-200 sm:h-14 sm:px-6 sm:text-base"
@@ -774,6 +961,27 @@ function SignedOut({
             </a>
           </div>
 
+          <div className="mt-4 flex max-w-2xl flex-col gap-2 text-sm sm:flex-row sm:items-center">
+            <span
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 ${
+                localBridge
+                  ? "border-emerald-300/25 bg-emerald-300/10 text-emerald-100"
+                  : "border-white/10 bg-white/[0.04] text-white/45"
+              }`}
+            >
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  localBridge ? "bg-emerald-300" : "bg-white/25"
+                }`}
+              />
+              {localBridge ? "Local bridge detected" : "Waiting for local bridge"}
+            </span>
+            {notice && <span className="text-white/50">{notice}</span>}
+            {!localBridge && localBridgeError && (
+              <span className="text-white/35">Run the installer, then this will switch on.</span>
+            )}
+          </div>
+
           <div className="mt-5 max-w-2xl rounded-2xl border border-white/10 bg-black/60 p-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <div className="min-w-0 flex-1 overflow-auto rounded-xl bg-[#050505] px-4 py-3 font-mono text-xs text-cyan-100/90">
@@ -787,8 +995,8 @@ function SignedOut({
               </button>
             </div>
             <p className="mt-3 px-1 text-xs leading-5 text-white/45">
-              Installs and runs the desktop bridge through npm. Sign in to generate the private
-              cloud command that links your desktop to this website.
+              Installs and runs the desktop bridge through npm. When it opens this website, Vlix can
+              create a private console and sync this computer without an email login.
             </p>
           </div>
 
@@ -826,7 +1034,7 @@ function SignedOut({
           <SalesStep
             icon={QrCode}
             label="Connect"
-            text="Sign in, generate a private cloud command, and bind that machine to your account."
+            text="Click Sync this computer. Vlix creates a private anonymous console and binds that machine to it."
           />
           <SalesStep
             icon={Smartphone}
@@ -843,7 +1051,7 @@ function RemoteAccessShowcase() {
   const flow = [
     { icon: Smartphone, label: "Phone", value: "vlix1.lovable.app" },
     { icon: ShieldCheck, label: "Cloud relay", value: "Supabase private account" },
-    { icon: MonitorUp, label: "Wake queue", value: "Locked or sleeping Mac/PC" },
+    { icon: MonitorUp, label: "Remote queue", value: "Desktop bridge online" },
     { icon: Bot, label: "Local agent", value: "Claude, Codex, more" },
   ];
 
@@ -856,7 +1064,7 @@ function RemoteAccessShowcase() {
             Remote mode
           </div>
           <h2 className="max-w-2xl text-3xl font-semibold tracking-tight text-white sm:text-5xl">
-            Your phone talks to the website. The website wakes the desktop.
+            Your phone talks to the website. The website relays to the desktop.
           </h2>
           <p className="mt-4 max-w-2xl text-sm leading-7 text-white/[0.58] sm:mt-5 sm:text-base sm:leading-8">
             The phone never needs to find your laptop on Wi-Fi. Messages, images, stop commands,
@@ -909,8 +1117,8 @@ function RemoteAccessShowcase() {
             />
             <RemoteRelayRow
               icon={MonitorUp}
-              label="3. Wake and run"
-              text="If the computer is locked or asleep, the cloud keeps the command queued until the desktop bridge wakes, reconnects, and runs it."
+              label="3. Run locally"
+              text="As long as the desktop bridge is running, it claims queued work and runs the real local agent."
             />
           </div>
         </div>
@@ -1024,7 +1232,7 @@ function WakeComputerAnimation() {
             Remote work demo
           </div>
           <div className="mt-1 text-sm font-semibold text-white/86">
-            Wake the desktop, then send real work into your local agent.
+            Reach the desktop, then send real work into your local agent.
           </div>
         </div>
         <div className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-xs font-semibold text-cyan-100">
@@ -1051,10 +1259,10 @@ function WakeComputerAnimation() {
 
           <div className="space-y-2.5">
             <div className="wake-message one ml-auto max-w-[86%] rounded-2xl rounded-br-md bg-white/[0.12] px-3 py-2 text-sm font-semibold text-white">
-              Hey, wake my computer up.
+              Hey, is my computer online?
             </div>
             <div className="wake-message two max-w-[88%] rounded-2xl rounded-bl-md bg-cyan-300/10 px-3 py-2 text-sm text-cyan-50">
-              Waking up your desktop...
+              Checking your desktop bridge...
             </div>
             <div className="wake-message three max-w-[92%] rounded-2xl rounded-bl-md bg-white/[0.055] px-3 py-2 text-sm text-white/84">
               Hey, I&apos;m here and ready to work.
@@ -1126,7 +1334,7 @@ function WakeComputerAnimation() {
               <div className="wake-screen sleep absolute inset-4 grid place-items-center rounded-xl bg-[#050505] text-center">
                 <div>
                   <div className="mx-auto mb-3 h-2 w-12 rounded-full bg-white/10" />
-                  <div className="text-sm font-semibold text-white/78">Computer asleep</div>
+                  <div className="text-sm font-semibold text-white/78">Desktop idle</div>
                   <div className="mt-1 text-xs text-white/36">waiting for cloud relay</div>
                 </div>
               </div>
@@ -1134,7 +1342,7 @@ function WakeComputerAnimation() {
               <div className="wake-screen boot absolute inset-4 grid place-items-center rounded-xl border border-cyan-300/20 bg-cyan-300/10 text-center">
                 <div>
                   <div className="wake-pulse mx-auto mb-3 h-8 w-8 rounded-full border-2 border-cyan-200/60 border-t-cyan-200" />
-                  <div className="text-sm font-semibold text-cyan-50">Starting computer...</div>
+                  <div className="text-sm font-semibold text-cyan-50">Connecting desktop...</div>
                   <div className="mt-1 text-xs text-cyan-100/55">desktop bridge reconnecting</div>
                 </div>
               </div>
