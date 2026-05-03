@@ -14,6 +14,35 @@ export type Database = {
   }
   public: {
     Tables: {
+      bridge_account_members: {
+        Row: {
+          account_id: string
+          created_at: string
+          role: string
+          user_id: string
+        }
+        Insert: {
+          account_id: string
+          created_at?: string
+          role?: string
+          user_id: string
+        }
+        Update: {
+          account_id?: string
+          created_at?: string
+          role?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bridge_account_members_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "bridge_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bridge_accounts: {
         Row: {
           created_at: string
@@ -314,7 +343,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      can_access_bridge_account: {
+        Args: { target_account_id: string }
+        Returns: boolean
+      }
+      consume_bridge_pairing_code: {
+        Args: { pairing_code: string }
+        Returns: string
+      }
     }
     Enums: {
       [_ in never]: never
