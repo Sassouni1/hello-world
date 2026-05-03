@@ -1,6 +1,6 @@
 {
   "name": "vlix-install",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "private": false,
   "description": "Vlix web app and desktop agent connector.",
   "repository": {

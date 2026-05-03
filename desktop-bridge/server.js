@@ -728,7 +728,8 @@ const createCloudPairing = async (config, account = ensureBridgeAccount()) => {
     cloud: true,
     accountId: config.accountId,
     account: publicBridgeAccount(account),
-    desktopDeviceId: account.desktopDevice?.id || cloudSyncState.deviceId || stableCloudDeviceId(),
+    desktopDeviceId:
+      account.desktopDevice?.id || cloudSyncState.deviceId || stableCloudDeviceId(config.accountId),
     phoneDeviceId,
     createdAt: new Date(createdAtMs).toISOString(),
     expiresAt,
@@ -3095,14 +3096,14 @@ const cloudRequest = async (config, path, options = {}) => {
 const cloudTable = (config, table, query = "", options = {}) =>
   cloudRequest(config, `/rest/v1/${table}${query ? `?${query}` : ""}`, options);
 
-const stableCloudDeviceId = () => {
+const stableCloudDeviceId = (accountId = "") => {
   const raw = process.env.VLIX_DEVICE_ID;
   if (raw && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) {
     return raw;
   }
   const hash = crypto
     .createHash("sha1")
-    .update(`${os.hostname()}|${CODEX_HOME}`)
+    .update(`${accountId}|${os.hostname()}|${CODEX_HOME}`)
     .digest("hex")
     .slice(0, 32);
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
@@ -3110,7 +3111,7 @@ const stableCloudDeviceId = () => {
 
 const cloudUpsertDevice = async (config) => {
   const now = new Date().toISOString();
-  const deviceId = stableCloudDeviceId();
+  const deviceId = stableCloudDeviceId(config.accountId);
   const rows = await cloudTable(config, "bridge_devices", "on_conflict=id", {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates,return=representation" },
