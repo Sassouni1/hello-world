@@ -1898,7 +1898,7 @@ const openPairing = async () => {
     els.pairingQr.src = pairing.qr;
     els.pairingLink.href = pairing.url;
     els.pairingLink.title = pairing.url;
-    els.pairingLink.textContent = "Open pairing link";
+    els.pairingLink.textContent = "Open hosted pairing link";
     els.pairingExpiry.textContent = `Expires ${formatDate(pairing.expiresAt)}`;
   } catch (error) {
     els.pairingQr.removeAttribute("src");
@@ -1918,7 +1918,7 @@ const renderBridgeInfo = (info) => {
   els.setupAccountTitle.textContent = account?.displayName || "Not created yet";
   els.setupAccountMeta.textContent = account
     ? `${account.accountId} · ${account.integrationStatus || "CONNECTED"} · ${account.desktopDevice?.name || "no desktop"}`
-    : "Create this first, then phones pair to this account and desktop.";
+    : "Create this first, then phones use the hosted website to reach this desktop.";
   els.setupAccountName.value = account?.displayName || "";
   els.setupCreateAccountBtn.textContent = account ? "Update" : "Create";
   els.setupLocalUrl.textContent = info.localUrl || "http://localhost:3001";
@@ -1941,7 +1941,7 @@ const renderAccountQr = (payload) => {
   els.setupAccountQr.src = payload.qr;
   els.setupAccountQrLink.href = payload.url;
   els.setupAccountQrLink.title = payload.url;
-  els.setupAccountQrStatus.textContent = "Account QR";
+  els.setupAccountQrStatus.textContent = "Hosted Vlix URL";
 };
 
 const loadAccountQr = async () => {

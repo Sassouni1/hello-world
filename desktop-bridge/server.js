@@ -44,6 +44,20 @@ const ACTIVE_MTIME_FALLBACK_MS = 8_000;
 const CHAT_LIST_CACHE_MS = 1500;
 const CHAT_DETAIL_TAIL_BYTES = Number(process.env.CHAT_DETAIL_TAIL_BYTES || 4 * 1024 * 1024);
 const CLOUD_POLL_MS = Number(process.env.VLIX_CLOUD_POLL_MS || 2200);
+const normalizePublicAppUrl = (value) => {
+  const raw = String(value || "").trim() || "https://vlix1.lovable.app";
+  try {
+    const parsed = new URL(raw);
+    parsed.hash = "";
+    parsed.search = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return "https://vlix1.lovable.app";
+  }
+};
+const PUBLIC_APP_URL = normalizePublicAppUrl(
+  process.env.VLIX_PUBLIC_APP_URL || process.env.VLIX_APP_URL || "https://vlix1.lovable.app",
+);
 
 const tasks = new Map();
 const pairings = new Map();
@@ -365,6 +379,18 @@ const pairingOrigin = (req) => {
 
 const localOrigin = () => `http://localhost:${PORT}`;
 
+const hostedAppUrl = (params = {}) => {
+  const url = new URL(PUBLIC_APP_URL);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return url.toString();
+};
+
+const sha256Hex = (value) => crypto.createHash("sha256").update(String(value)).digest("hex");
+
 const bridgeAccountName = () => `${os.userInfo().username || "User"}'s Vlix Bridge`;
 
 const publicBridgeAccount = (account) => {
@@ -522,8 +548,8 @@ const ensureAccountQrToken = (account) => {
 };
 
 const accountQrUrl = (req, account) => {
-  const token = ensureAccountQrToken(account);
-  return `${pairingOrigin(req)}/?account_setup=1&account=${encodeURIComponent(account.accountId)}&setupToken=${encodeURIComponent(token)}`;
+  ensureAccountQrToken(account);
+  return hostedAppUrl();
 };
 
 const createAccountQr = async (req, account = ensureBridgeAccount()) => {
@@ -558,7 +584,7 @@ const bridgeInfo = (req, account = readBridgeAccount()) => ({
   host: HOST,
   port: PORT,
   localUrl: localOrigin(),
-  phoneUrl: pairingOrigin(req),
+  phoneUrl: PUBLIC_APP_URL,
   account: publicBridgeAccount(account),
   appServer: codexAppServer.status,
   install: {
@@ -597,8 +623,53 @@ const probeExistingBridge = (port) =>
     req.on("error", () => resolve(false));
   });
 
+const createCloudPairing = async (config, account = ensureBridgeAccount()) => {
+  const token = crypto.randomBytes(24).toString("base64url");
+  const phoneDeviceId = `phone_${crypto.randomBytes(9).toString("base64url")}`;
+  const createdAtMs = Date.now();
+  const expiresAtMs = createdAtMs + PAIRING_TTL_MS;
+  const expiresAt = new Date(expiresAtMs).toISOString();
+  await cloudTable(config, "bridge_pairing_codes", "", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: {
+      account_id: config.accountId,
+      code_hash: sha256Hex(token),
+      expires_at: expiresAt,
+    },
+  });
+  const url = hostedAppUrl({ pair: token, phone: "1" });
+  const qr = await QRCode.toDataURL(url, {
+    width: 248,
+    margin: 2,
+    color: { dark: "#111111", light: "#ffffff" },
+  });
+  return {
+    token,
+    url,
+    qr,
+    cloud: true,
+    accountId: config.accountId,
+    account: publicBridgeAccount(account),
+    desktopDeviceId: account.desktopDevice?.id || cloudSyncState.deviceId || stableCloudDeviceId(),
+    phoneDeviceId,
+    createdAt: new Date(createdAtMs).toISOString(),
+    expiresAt,
+    expiresAtMs,
+    lastSeenAt: null,
+  };
+};
+
 const createPairing = async (req, account = ensureBridgeAccount()) => {
   cleanupPairings();
+  const config = cloudConfig();
+  if (config) return createCloudPairing(config, account);
+  if (process.env.VLIX_ALLOW_LAN_PAIRING !== "1") {
+    throw new Error(
+      "Phone pairing requires the cloud bridge. Run the VLIX_BRIDGE_SETUP command from the hosted Vlix website, then pair again.",
+    );
+  }
+
   const token = crypto.randomBytes(24).toString("base64url");
   const phoneDeviceId = `phone_${crypto.randomBytes(9).toString("base64url")}`;
   const createdAtMs = Date.now();
@@ -3284,7 +3355,13 @@ const routeApi = async (req, res, reqUrl) => {
       return true;
     }
     const syncedAccount = syncBridgeAccountFromCodex(account);
-    const pairing = await createPairing(req, syncedAccount);
+    let pairing;
+    try {
+      pairing = await createPairing(req, syncedAccount);
+    } catch (error) {
+      send(res, 409, { error: error.message || "Phone pairing is unavailable." });
+      return true;
+    }
     send(res, 200, {
       token: pairing.token,
       url: pairing.url,
@@ -3827,7 +3904,7 @@ const startServer = () => {
   server.listen(PORT, HOST, () => {
     const url = localOrigin();
     console.log(`Vlix Bridge listening on ${url}`);
-    console.log(`Phone pairing is available from the desktop app at ${url}`);
+    console.log(`Phone pairing opens the hosted Vlix app at ${PUBLIC_APP_URL}`);
     startCloudSync();
     if (process.env.OPEN_ON_START === "1") {
       try {

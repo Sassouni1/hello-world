@@ -20,6 +20,11 @@ VLIX_BRIDGE_SETUP='...' npm create vlix@latest
 The first successful cloud setup is saved locally in the user's Codex bridge state,
 so later launches can reconnect without pasting the payload again.
 
+Phone QR codes must point at the hosted Vlix app, not this local server. The phone
+talks to Supabase, and the desktop bridge polls Supabase to run the local agent.
+LAN pairing is disabled unless `VLIX_ALLOW_LAN_PAIRING=1` is explicitly set for
+local development.
+
 On macOS, the installer creates `~/Applications/Vlix.app` with the Vlix icon.
 Opening that app runs the latest npm bridge and reopens the local console.
 

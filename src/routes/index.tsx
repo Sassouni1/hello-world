@@ -48,10 +48,22 @@ type BridgeAttachment = {
 const installCommand = "npm create vlix@latest";
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "";
+const initialPairingCode =
+  typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("pair") || "";
+
+async function sha256Hex(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 function Index() {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [pairingCode, setPairingCode] = useState(initialPairingCode);
+  const [pairingBusy, setPairingBusy] = useState(false);
   const [email, setEmail] = useState("");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [activeAccountId, setActiveAccountId] = useState("");
@@ -98,6 +110,47 @@ function Index() {
     // loadAccounts is intentionally tied to the authenticated user changing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  useEffect(() => {
+    if (!pairingCode || user || pairingBusy) return;
+    setPairingBusy(true);
+    supabase.auth.signInAnonymously().then(({ error }) => {
+      if (error) setNotice(error.message);
+      setPairingBusy(false);
+    });
+  }, [pairingBusy, pairingCode, user]);
+
+  useEffect(() => {
+    if (!pairingCode || !user || pairingBusy) return;
+    let cancelled = false;
+    setPairingBusy(true);
+    supabase
+      .rpc("consume_bridge_pairing_code", { pairing_code: pairingCode })
+      .then(async ({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          setNotice(error.message);
+          return;
+        }
+        const accountId = typeof data === "string" ? data : "";
+        setNotice("Phone paired. This browser can now message the desktop bridge from anywhere.");
+        setPairingCode("");
+        const url = new URL(window.location.href);
+        url.searchParams.delete("pair");
+        url.searchParams.delete("phone");
+        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+        await loadAccounts(user.id);
+        if (accountId) setActiveAccountId(accountId);
+      })
+      .finally(() => {
+        if (!cancelled) setPairingBusy(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // loadAccounts is intentionally called after pairing consumption.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pairingBusy, pairingCode, user]);
 
   useEffect(() => {
     if (!activeAccountId) return;
@@ -201,13 +254,12 @@ function Index() {
     const { data, error } = await supabase
       .from("bridge_accounts")
       .select("*")
-      .eq("owner_user_id", ownerUserId)
       .order("created_at", { ascending: true });
     if (error) {
       setNotice(error.message);
       return;
     }
-    if (!data.length) {
+    if (!data.length && !pairingCode) {
       const created = await createAccount(ownerUserId);
       if (created) return;
     }
@@ -282,7 +334,7 @@ function Index() {
     const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
     const { error } = await supabase.from("bridge_pairing_codes").insert({
       account_id: activeAccount.id,
-      code_hash: code,
+      code_hash: await sha256Hex(code),
       expires_at: expiresAt,
     });
     if (error) {
