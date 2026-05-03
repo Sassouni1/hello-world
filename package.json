@@ -1,8 +1,12 @@
 {
   "name": "vlix-install",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": false,
   "description": "Vlix web app and desktop agent connector.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sassouni1/hello-world.git"
+  },
   "sideEffects": false,
   "type": "module",
   "files": [

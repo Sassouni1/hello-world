@@ -606,16 +606,28 @@ const openUrl = (url) => {
 const probeExistingBridge = (port) =>
   new Promise((resolve) => {
     const req = http.get(
-      { hostname: "127.0.0.1", port, path: "/api/app-version", timeout: 700 },
+      { hostname: "127.0.0.1", port, path: "/api/bridge/info", timeout: 700 },
       (res) => {
         let body = "";
         res.setEncoding("utf8");
         res.on("data", (chunk) => {
           body += chunk;
-          if (body.length > 1024) req.destroy();
+          if (body.length > 12_000) req.destroy();
         });
         res.on("end", () => {
-          resolve(res.statusCode === 200 && /"version"\s*:/.test(body));
+          if (res.statusCode !== 200) {
+            resolve(false);
+            return;
+          }
+          try {
+            const info = JSON.parse(body);
+            resolve(
+              info?.name === PACKAGE_NAME &&
+                String(info?.version || "") === String(packageJson.version || ""),
+            );
+          } catch {
+            resolve(false);
+          }
         });
       },
     );
@@ -3904,11 +3916,11 @@ const startServer = () => {
   server.listen(PORT, HOST, () => {
     const url = localOrigin();
     console.log(`Vlix Bridge listening on ${url}`);
-    console.log(`Phone pairing opens the hosted Vlix app at ${PUBLIC_APP_URL}`);
+    console.log(`Opening hosted Vlix app at ${PUBLIC_APP_URL}`);
     startCloudSync();
     if (process.env.OPEN_ON_START === "1") {
       try {
-        openUrl(url);
+        openUrl(PUBLIC_APP_URL);
       } catch (error) {
         console.warn(`Unable to open browser automatically: ${error.message}`);
       }
@@ -3925,8 +3937,9 @@ server.on("error", async (error) => {
   const url = localOrigin();
   if (await probeExistingBridge(PORT)) {
     console.log(`Vlix Bridge is already running on ${url}`);
+    console.log(`Opening hosted Vlix app at ${PUBLIC_APP_URL}`);
     try {
-      openUrl(url);
+      openUrl(PUBLIC_APP_URL);
     } catch (error) {
       console.warn(`Unable to open browser automatically: ${error.message}`);
     }

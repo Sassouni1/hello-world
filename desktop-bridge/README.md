@@ -1,8 +1,8 @@
 # Vlix Desktop Bridge
 
-Runs on the user's computer beside their desktop AI agent. It opens a local console,
-connects to the real local agent session store, and can relay work through the hosted
-Supabase-backed Vlix app.
+Runs on the user's computer beside their desktop AI agent. It starts a local bridge,
+opens the hosted Vlix app, connects to the real local agent session store, and can
+relay work through the Supabase-backed web app.
 
 From the repository root:
 
@@ -26,7 +26,7 @@ LAN pairing is disabled unless `VLIX_ALLOW_LAN_PAIRING=1` is explicitly set for
 local development.
 
 On macOS, the installer creates `~/Applications/Vlix.app` with the Vlix icon.
-Opening that app runs the latest npm bridge and reopens the local console.
+Opening that app runs the latest npm bridge and opens the hosted Vlix app.
 
 For local development:
 

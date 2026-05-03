@@ -1,7 +1,11 @@
 {
   "name": "@vlix/desktop-bridge",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sassouni1/hello-world.git"
+  },
   "type": "commonjs",
   "main": "server.js",
   "bin": {

@@ -16,13 +16,14 @@ npm run dev
 npm create vlix@latest
 ```
 
-The base installer opens a local console. For cloud phone/web access, sign into
-the hosted Vlix app and copy the generated `VLIX_BRIDGE_SETUP='...' npm create
-vlix@latest` command. That binds the desktop bridge to the user's Supabase account
-so phones do not need to be on the same Wi-Fi network.
+The installer starts the local desktop bridge in the background, then opens the
+hosted Vlix app at `https://vlix1.lovable.app`. For cloud phone/web access, sign
+into the hosted Vlix app and copy the generated `VLIX_BRIDGE_SETUP='...' npm
+create vlix@latest` command. That binds the desktop bridge to the user's
+Supabase account so phones do not need to be on the same Wi-Fi network.
 
 On macOS, the installer also creates `~/Applications/Vlix.app` with the Vlix icon
-so the user can reopen the bridge from Applications or Spotlight.
+so the user can reopen Vlix from Applications or Spotlight.
 
 ## Supabase
 
