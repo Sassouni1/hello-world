@@ -4248,11 +4248,12 @@ const startServer = () => {
     const url = localOrigin();
     const setupUrl = hostedDesktopSetupUrl();
     console.log(`Vlix Bridge listening on ${url}`);
-    console.log(`Opening hosted Vlix app at ${setupUrl}`);
+    console.log(`Hosted Vlix app available at ${setupUrl}`);
+    console.log(`Opening local Command IQ Console at ${url}`);
     startCloudSync();
     if (process.env.OPEN_ON_START === "1") {
       try {
-        openUrl(setupUrl);
+        openUrl(url);
       } catch (error) {
         console.warn(`Unable to open browser automatically: ${error.message}`);
       }
@@ -4270,9 +4271,10 @@ server.on("error", async (error) => {
   if (await probeExistingBridge(PORT)) {
     const setupUrl = hostedDesktopSetupUrl();
     console.log(`Vlix Bridge is already running on ${url}`);
-    console.log(`Opening hosted Vlix app at ${setupUrl}`);
+    console.log(`Hosted Vlix app available at ${setupUrl}`);
+    console.log(`Opening local Command IQ Console at ${url}`);
     try {
-      openUrl(setupUrl);
+      openUrl(url);
     } catch (error) {
       console.warn(`Unable to open browser automatically: ${error.message}`);
     }
