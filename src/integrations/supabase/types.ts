@@ -351,6 +351,23 @@ export type Database = {
         Args: { pairing_code: string }
         Returns: string
       }
+      create_bridge_account: {
+        Args: { display_name?: string }
+        Returns: {
+          created_at: string
+          display_name: string
+          id: string
+          owner_user_id: string
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "bridge_accounts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
     }
     Enums: {
       [_ in never]: never
