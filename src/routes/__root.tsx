@@ -29,20 +29,34 @@ export const Route = createRootRoute({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Vlix" },
+      { title: "Vlix | Command local AI agents from anywhere" },
       {
         name: "description",
         content: "Command your local AI agents from any browser or phone through a private cloud bridge.",
       },
       { name: "author", content: "Vlix" },
-      { property: "og:title", content: "Vlix" },
+      { property: "og:title", content: "Vlix | Command local AI agents from anywhere" },
       {
         property: "og:description",
         content: "A web console and desktop bridge for synced local AI agent sessions.",
       },
       { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
+      { property: "og:url", content: "https://vlix1.lovable.app/" },
+      { property: "og:image", content: "https://vlix1.lovable.app/vlix-og.png" },
+      { property: "og:image:width", content: "1200" },
+      { property: "og:image:height", content: "630" },
+      {
+        property: "og:image:alt",
+        content: "Vlix social preview showing a private cloud bridge for local AI agents.",
+      },
+      { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:site", content: "@Vlix" },
+      { name: "twitter:title", content: "Vlix | Command local AI agents from anywhere" },
+      {
+        name: "twitter:description",
+        content: "Command your local AI agents from any browser or phone through a private cloud bridge.",
+      },
+      { name: "twitter:image", content: "https://vlix1.lovable.app/vlix-og.png" },
     ],
     links: [
       {

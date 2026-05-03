@@ -1,0 +1,81 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="630" fill="#050606"/>
+  <rect x="1" y="1" width="1198" height="628" rx="38" stroke="rgba(255,255,255,0.08)" stroke-width="2"/>
+  <circle cx="1000" cy="80" r="330" fill="url(#cyanGlow)" opacity="0.42"/>
+  <circle cx="260" cy="560" r="260" fill="url(#violetGlow)" opacity="0.2"/>
+  <path d="M0 214H1200" stroke="rgba(34,211,238,0.16)"/>
+  <path d="M0 458H1200" stroke="rgba(255,255,255,0.05)"/>
+
+  <g transform="translate(76 74)">
+    <rect width="72" height="72" rx="20" fill="url(#logoGradient)"/>
+    <text x="36" y="48" text-anchor="middle" fill="#050606" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="800">V</text>
+    <text x="96" y="30" fill="#F7F7F4" font-family="Inter, Arial, sans-serif" font-size="30" font-weight="800">Vlix</text>
+    <text x="96" y="58" fill="rgba(255,255,255,0.48)" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700" letter-spacing="5">LOCAL AGENTS</text>
+  </g>
+
+  <g transform="translate(76 190)">
+    <rect width="273" height="36" rx="18" fill="rgba(34,211,238,0.12)" stroke="rgba(34,211,238,0.28)"/>
+    <circle cx="22" cy="18" r="5" fill="#39E6FF"/>
+    <text x="40" y="23" fill="#A9F7FF" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="800">Universal AI bridge</text>
+
+    <text x="0" y="102" fill="#F8F8F5" font-family="Inter, Arial, sans-serif" font-size="66" font-weight="850" letter-spacing="-2.8">
+      <tspan x="0" dy="0">Command local</tspan>
+      <tspan x="0" dy="72">AI agents from</tspan>
+      <tspan x="0" dy="72">anywhere.</tspan>
+    </text>
+
+    <text x="0" y="315" fill="rgba(255,255,255,0.64)" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="600">
+      <tspan x="0" dy="0">Your phone talks to the website.</tspan>
+      <tspan x="0" dy="36">The website wakes the desktop.</tspan>
+    </text>
+  </g>
+
+  <g transform="translate(76 552)">
+    <rect width="346" height="54" rx="18" fill="#39E6FF"/>
+    <text x="28" y="35" fill="#051013" font-family="SFMono-Regular, Consolas, monospace" font-size="20" font-weight="800">npm create vlix@latest</text>
+  </g>
+
+  <g transform="translate(602 108)">
+    <rect width="486" height="392" rx="34" fill="#080909" stroke="rgba(255,255,255,0.12)" stroke-width="2"/>
+    <rect x="24" y="24" width="438" height="344" rx="24" fill="#0B0D0D" stroke="rgba(34,211,238,0.16)"/>
+    <rect x="48" y="50" width="180" height="42" rx="21" fill="rgba(34,211,238,0.16)" stroke="rgba(34,211,238,0.28)"/>
+    <text x="70" y="77" fill="#B9FBFF" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="800">Desktop awake</text>
+    <rect x="352" y="50" width="82" height="42" rx="21" fill="rgba(255,255,255,0.07)" stroke="rgba(255,255,255,0.1)"/>
+    <text x="379" y="77" fill="rgba(255,255,255,0.72)" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800">Mac</text>
+
+    <g transform="translate(48 124)">
+      <rect width="386" height="64" rx="19" fill="rgba(255,255,255,0.07)"/>
+      <text x="24" y="39" fill="#F5F5F1" font-family="Inter, Arial, sans-serif" font-size="21" font-weight="800">Send work from phone</text>
+    </g>
+    <g transform="translate(48 206)">
+      <rect width="386" height="116" rx="22" fill="rgba(34,211,238,0.1)" stroke="rgba(34,211,238,0.32)"/>
+      <circle cx="31" cy="32" r="7" fill="#39E6FF"/>
+      <text x="52" y="39" fill="#E9FEFF" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="850">Deploying agents</text>
+      <text x="294" y="39" fill="#A8E9EE" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="800">3 active</text>
+      <rect x="23" y="60" width="340" height="1" fill="rgba(255,255,255,0.12)"/>
+      <text x="24" y="91" fill="#F7F7F4" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="800">Explorer</text>
+      <text x="132" y="91" fill="rgba(255,255,255,0.55)" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="650">mapping repo</text>
+    </g>
+  </g>
+
+  <g transform="translate(832 422)">
+    <rect x="0" y="0" width="242" height="68" rx="24" fill="#0A0B0B" stroke="rgba(255,255,255,0.12)"/>
+    <circle cx="38" cy="34" r="9" fill="#39E6FF"/>
+    <text x="62" y="40" fill="#F7F7F4" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="850">Private cloud relay</text>
+  </g>
+
+  <defs>
+    <radialGradient id="cyanGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1000 80) rotate(90) scale(330)">
+      <stop stop-color="#39E6FF"/>
+      <stop offset="1" stop-color="#39E6FF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="violetGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(260 560) rotate(90) scale(260)">
+      <stop stop-color="#8B5CF6"/>
+      <stop offset="1" stop-color="#8B5CF6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="logoGradient" x1="0" y1="0" x2="72" y2="72" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38DDFE"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+  </defs>
+</svg>
