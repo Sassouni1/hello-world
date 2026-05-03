@@ -713,9 +713,13 @@ function Index() {
 function SignedOut({
   copied,
   copyInstall,
+  onStartConsole,
+  starting,
 }: {
   copied: string;
   copyInstall: () => void;
+  onStartConsole: () => void;
+  starting: boolean;
 }) {
   return (
     <section className="relative overflow-hidden">
@@ -736,6 +740,18 @@ function SignedOut({
           </p>
 
           <div className="mt-7 flex flex-col gap-3 sm:mt-8 sm:flex-row">
+            <Button
+              className="h-[52px] rounded-2xl bg-white px-5 text-sm font-semibold text-black hover:bg-white/90 sm:h-14 sm:px-6 sm:text-base"
+              onClick={onStartConsole}
+              disabled={starting}
+            >
+              {starting ? (
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+              ) : (
+                <Sparkles className="mr-2 h-5 w-5" />
+              )}
+              Start web console
+            </Button>
             <Button
               className="h-[52px] rounded-2xl bg-cyan-300 px-5 text-sm font-semibold text-black shadow-[0_0_34px_rgba(34,211,238,0.32)] hover:bg-cyan-200 sm:h-14 sm:px-6 sm:text-base"
               onClick={copyInstall}
