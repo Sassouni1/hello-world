@@ -856,80 +856,89 @@ function WakeComputerAnimation() {
   return (
     <div className="wake-demo mt-6 overflow-hidden rounded-[1.6rem] border border-white/10 bg-black/35 p-4 shadow-[0_24px_70px_rgba(0,0,0,0.28)]">
       <style>{`
-        .wake-demo .wake-request {
-          animation: wakeRequest 4.8s ease-in-out infinite;
-        }
-        .wake-demo .wake-packet {
-          animation: wakePacket 4.8s ease-in-out infinite;
-        }
-        .wake-demo .wake-monitor-screen {
-          animation: wakeScreen 4.8s ease-in-out infinite;
-        }
-        .wake-demo .wake-power {
-          animation: wakePower 4.8s ease-in-out infinite;
-        }
-        .wake-demo .wake-state {
-          color: #ffffff;
+        .wake-demo .wake-message {
+          animation: wakeMessage 12s linear infinite;
           opacity: 0;
-          text-shadow: 0 0 18px rgba(255,255,255,0.24), 0 1px 0 rgba(0,0,0,0.85);
+          transform: translateY(7px);
         }
-        .wake-demo .wake-state.sleeping {
-          animation: wakeSleeping 4.8s ease-in-out infinite;
-          opacity: 1;
+        .wake-demo .wake-message.one { animation-delay: 0s; }
+        .wake-demo .wake-message.two { animation-delay: 1.2s; }
+        .wake-demo .wake-message.three { animation-delay: 2.7s; }
+        .wake-demo .wake-message.four { animation-delay: 4.4s; }
+        .wake-demo .wake-message.five { animation-delay: 6.1s; }
+        .wake-demo .wake-message.six { animation-delay: 7.4s; }
+        .wake-demo .wake-screen {
+          opacity: 0;
+          transform: translateY(6px) scale(0.98);
         }
-        .wake-demo .wake-state.starting {
-          animation: wakeStarting 4.8s ease-in-out infinite;
+        .wake-demo .wake-screen.sleep { animation: wakeSleepPanel 12s linear infinite; }
+        .wake-demo .wake-screen.boot { animation: wakeBootPanel 12s linear infinite; }
+        .wake-demo .wake-screen.ready { animation: wakeReadyPanel 12s linear infinite; }
+        .wake-demo .wake-screen.code { animation: wakeCodePanel 12s linear infinite; }
+        .wake-demo .wake-screen.agents { animation: wakeAgentsPanel 12s linear infinite; }
+        .wake-demo .wake-pulse {
+          animation: wakePulse 1.45s ease-in-out infinite;
         }
-        .wake-demo .wake-state.awake {
-          animation: wakeAwake 4.8s ease-in-out infinite;
-          color: #d9fbff;
+        .wake-demo .wake-code-line {
+          animation: wakeCodeLine 1.8s ease-in-out infinite;
+          transform-origin: left;
         }
-        .wake-demo .wake-cursor {
-          animation: wakeBlink 0.9s steps(2, start) infinite;
+        .wake-demo .wake-code-line:nth-child(2) { animation-delay: 0.2s; }
+        .wake-demo .wake-code-line:nth-child(3) { animation-delay: 0.45s; }
+        .wake-demo .wake-code-line:nth-child(4) { animation-delay: 0.7s; }
+        .wake-demo .wake-agent {
+          animation: wakeAgent 1.6s ease-in-out infinite;
         }
-        @keyframes wakeRequest {
-          0%, 100% { transform: translateY(0); box-shadow: 0 0 0 rgba(34,211,238,0); }
-          14%, 34% { transform: translateY(-2px); box-shadow: 0 0 32px rgba(34,211,238,0.14); }
+        .wake-demo .wake-agent:nth-child(2) { animation-delay: 0.25s; }
+        .wake-demo .wake-agent:nth-child(3) { animation-delay: 0.5s; }
+        @keyframes wakeMessage {
+          0%, 82% { opacity: 1; transform: translateY(0); }
+          92%, 100% { opacity: 0; transform: translateY(-5px); }
         }
-        @keyframes wakePacket {
-          0%, 13% { opacity: 0; transform: translateX(-34px) scale(0.75); }
-          22%, 55% { opacity: 1; }
-          68%, 100% { opacity: 0; transform: translateX(104px) scale(1); }
+        @keyframes wakeSleepPanel {
+          0%, 12% { opacity: 1; transform: translateY(0) scale(1); }
+          17%, 100% { opacity: 0; transform: translateY(-5px) scale(0.99); }
         }
-        @keyframes wakeScreen {
-          0%, 38% { background: #060606; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04); }
-          48%, 68% { background: radial-gradient(circle at 50% 62%, rgba(34,211,238,0.34), rgba(8,22,25,0.9) 42%, #050505 74%); box-shadow: 0 0 24px rgba(34,211,238,0.18), inset 0 0 0 1px rgba(34,211,238,0.25); }
-          78%, 100% { background: linear-gradient(180deg, rgba(34,211,238,0.22), rgba(6,19,20,0.95)); box-shadow: 0 0 42px rgba(34,211,238,0.24), inset 0 0 0 1px rgba(34,211,238,0.38); }
+        @keyframes wakeBootPanel {
+          0%, 17% { opacity: 0; transform: translateY(6px) scale(0.98); }
+          22%, 31% { opacity: 1; transform: translateY(0) scale(1); }
+          36%, 100% { opacity: 0; transform: translateY(-5px) scale(0.99); }
         }
-        @keyframes wakePower {
-          0%, 38% { background: rgba(255,255,255,0.18); box-shadow: none; }
-          50%, 100% { background: #22d3ee; box-shadow: 0 0 18px rgba(34,211,238,0.82); }
+        @keyframes wakeReadyPanel {
+          0%, 36% { opacity: 0; transform: translateY(6px) scale(0.98); }
+          42%, 52% { opacity: 1; transform: translateY(0) scale(1); }
+          58%, 100% { opacity: 0; transform: translateY(-5px) scale(0.99); }
         }
-        @keyframes wakeSleeping {
-          0%, 24% { opacity: 1; transform: translateY(0); }
-          34%, 100% { opacity: 0; transform: translateY(-5px); }
+        @keyframes wakeCodePanel {
+          0%, 58% { opacity: 0; transform: translateY(6px) scale(0.98); }
+          63%, 72% { opacity: 1; transform: translateY(0) scale(1); }
+          77%, 100% { opacity: 0; transform: translateY(-5px) scale(0.99); }
         }
-        @keyframes wakeStarting {
-          0%, 28% { opacity: 0; transform: translateY(5px); }
-          38%, 58% { opacity: 1; transform: translateY(0); }
-          68%, 100% { opacity: 0; transform: translateY(-5px); }
+        @keyframes wakeAgentsPanel {
+          0%, 78% { opacity: 0; transform: translateY(6px) scale(0.98); }
+          83%, 97% { opacity: 1; transform: translateY(0) scale(1); }
+          100% { opacity: 0; transform: translateY(-5px) scale(0.99); }
         }
-        @keyframes wakeAwake {
-          0%, 62% { opacity: 0; transform: translateY(5px); }
-          72%, 94% { opacity: 1; transform: translateY(0); }
-          100% { opacity: 0; transform: translateY(-5px); }
+        @keyframes wakePulse {
+          0%, 100% { box-shadow: 0 0 0 rgba(34,211,238,0); opacity: 0.72; }
+          50% { box-shadow: 0 0 22px rgba(34,211,238,0.72); opacity: 1; }
         }
-        @keyframes wakeBlink {
-          50% { opacity: 0; }
+        @keyframes wakeCodeLine {
+          0%, 100% { transform: scaleX(0.42); opacity: 0.48; }
+          50% { transform: scaleX(1); opacity: 1; }
+        }
+        @keyframes wakeAgent {
+          0%, 100% { border-color: rgba(255,255,255,0.1); background: rgba(255,255,255,0.035); }
+          50% { border-color: rgba(34,211,238,0.45); background: rgba(34,211,238,0.12); }
         }
       `}</style>
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-cyan-200">
-            Also handles wake queues
+            Remote work demo
           </div>
           <div className="mt-1 text-sm font-semibold text-white/86">
-            If your computer is locked or asleep, Vlix keeps the request waiting.
+            Wake the desktop, then send real work into your local agent.
           </div>
         </div>
         <div className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-xs font-semibold text-cyan-100">
@@ -937,44 +946,128 @@ function WakeComputerAnimation() {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-[1fr_70px_1fr] sm:items-center">
-        <div className="wake-request rounded-3xl border border-white/10 bg-white/[0.045] p-3">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-cyan-300/12 text-cyan-100">
-              <Smartphone className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="text-xs uppercase tracking-[0.2em] text-white/36">Phone</div>
-              <div className="mt-1 text-sm font-semibold text-white">
-                Please wake up my computer.
+      <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr] lg:items-stretch">
+        <div className="rounded-3xl border border-white/10 bg-[#101010] p-3">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-cyan-300/12 text-cyan-100">
+                <Smartphone className="h-4 w-4" />
               </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.2em] text-white/36">Phone</div>
+                <div className="text-sm font-semibold text-white">Vlix mobile</div>
+              </div>
+            </div>
+            <span className="rounded-full bg-cyan-300/10 px-2.5 py-1 text-[11px] font-semibold text-cyan-100">
+              remote
+            </span>
+          </div>
+
+          <div className="space-y-2.5">
+            <div className="wake-message one ml-auto max-w-[86%] rounded-2xl rounded-br-md bg-white/[0.12] px-3 py-2 text-sm font-semibold text-white">
+              Hey, wake my computer up.
+            </div>
+            <div className="wake-message two max-w-[88%] rounded-2xl rounded-bl-md bg-cyan-300/10 px-3 py-2 text-sm text-cyan-50">
+              Waking up your desktop...
+            </div>
+            <div className="wake-message three max-w-[92%] rounded-2xl rounded-bl-md bg-white/[0.055] px-3 py-2 text-sm text-white/84">
+              Hey, I&apos;m here and ready to work.
+            </div>
+            <div className="wake-message four ml-auto max-w-[90%] rounded-2xl rounded-br-md bg-white/[0.12] px-3 py-2 text-sm font-semibold text-white">
+              Create a visually stunning website.
+            </div>
+            <div className="wake-message five ml-auto max-w-[90%] rounded-2xl rounded-br-md bg-white/[0.12] px-3 py-2 text-sm font-semibold text-white">
+              Then let&apos;s work on my codebase.
+            </div>
+            <div className="wake-message six max-w-[94%] rounded-2xl rounded-bl-md border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-sm text-cyan-50">
+              Okay, getting started. Agents deployed and working.
             </div>
           </div>
         </div>
 
-        <div className="relative hidden h-16 sm:block">
-          <div className="absolute left-0 right-0 top-1/2 h-px bg-gradient-to-r from-cyan-300/10 via-cyan-300/55 to-cyan-300/10" />
-          <div className="wake-packet absolute left-1/2 top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.9)]" />
-        </div>
-
-        <div className="rounded-3xl border border-white/10 bg-[#0b0b0b] p-4">
-          <div className="mx-auto max-w-[220px]">
-            <div className="wake-monitor-screen grid h-28 place-items-center rounded-2xl border border-white/10 bg-black">
-              <div className="relative h-11 w-full px-4 text-center text-sm font-semibold text-white">
-                <div className="wake-state sleeping absolute inset-x-0 top-1">Sleeping...</div>
-                <div className="wake-state starting absolute inset-x-0 top-1">
-                  Starting computer<span className="wake-cursor">...</span>
+        <div className="rounded-3xl border border-white/10 bg-[#080808] p-3">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="wake-pulse flex h-8 w-8 items-center justify-center rounded-xl bg-cyan-300/12 text-cyan-100">
+                <MonitorUp className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.2em] text-white/36">
+                  Desktop
                 </div>
-                <div className="wake-state awake absolute inset-x-0 top-0 leading-5">
-                  Hello, I&apos;m awake
-                  <br />
-                  and ready to work.
-                </div>
+                <div className="text-sm font-semibold text-white">Local agent screen</div>
               </div>
             </div>
-            <div className="mx-auto h-8 w-16 border-x border-white/10" />
-            <div className="mx-auto flex h-3 w-28 items-center justify-center rounded-full bg-white/10">
-              <span className="wake-power h-1.5 w-1.5 rounded-full" />
+            <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-semibold text-white/60">
+              Mac / PC
+            </span>
+          </div>
+
+          <div className="relative min-h-[258px] overflow-hidden rounded-2xl border border-white/10 bg-black p-3">
+            <div className="wake-screen sleep absolute inset-3 grid place-items-center rounded-xl bg-[#050505] text-center">
+              <div>
+                <div className="mx-auto mb-3 h-2 w-12 rounded-full bg-white/10" />
+                <div className="text-sm font-semibold text-white/78">Computer asleep</div>
+                <div className="mt-1 text-xs text-white/36">waiting for cloud relay</div>
+              </div>
+            </div>
+
+            <div className="wake-screen boot absolute inset-3 grid place-items-center rounded-xl border border-cyan-300/20 bg-cyan-300/10 text-center">
+              <div>
+                <div className="wake-pulse mx-auto mb-3 h-8 w-8 rounded-full border-2 border-cyan-200/60 border-t-cyan-200" />
+                <div className="text-sm font-semibold text-cyan-50">Starting computer...</div>
+                <div className="mt-1 text-xs text-cyan-100/55">desktop bridge reconnecting</div>
+              </div>
+            </div>
+
+            <div className="wake-screen ready absolute inset-3 grid place-items-center rounded-xl border border-cyan-300/25 bg-[radial-gradient(circle_at_50%_45%,rgba(34,211,238,0.28),rgba(6,16,18,0.96)_58%)] text-center">
+              <div>
+                <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-2xl bg-cyan-300 text-black">
+                  <Check className="h-5 w-5" />
+                </div>
+                <div className="text-sm font-semibold text-white">
+                  Hello, I&apos;m awake and ready to work.
+                </div>
+                <div className="mt-1 text-xs text-cyan-100/58">agent connected</div>
+              </div>
+            </div>
+
+            <div className="wake-screen code absolute inset-3 rounded-xl border border-white/10 bg-[#071011] p-3">
+              <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-cyan-100">
+                <Terminal className="h-3.5 w-3.5" />
+                Designing website
+              </div>
+              <div className="space-y-2">
+                <div className="wake-code-line h-2 w-full rounded-full bg-cyan-300/60" />
+                <div className="wake-code-line h-2 w-[72%] rounded-full bg-violet-300/50" />
+                <div className="wake-code-line h-2 w-[88%] rounded-full bg-white/28" />
+                <div className="wake-code-line h-2 w-[58%] rounded-full bg-cyan-300/42" />
+              </div>
+              <div className="mt-4 grid grid-cols-3 gap-2">
+                <div className="h-12 rounded-xl bg-cyan-300/16" />
+                <div className="h-12 rounded-xl bg-white/10" />
+                <div className="h-12 rounded-xl bg-violet-300/16" />
+              </div>
+            </div>
+
+            <div className="wake-screen agents absolute inset-3 rounded-xl border border-cyan-300/20 bg-[#071011] p-3">
+              <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-cyan-100">
+                <Bot className="h-3.5 w-3.5" />
+                Agents deployed
+              </div>
+              <div className="space-y-2">
+                {["Explorer reading repo", "Designer shaping UI", "Worker editing code"].map(
+                  (item) => (
+                    <div
+                      key={item}
+                      className="wake-agent flex items-center justify-between rounded-xl border px-3 py-2 text-xs text-white/72"
+                    >
+                      <span>{item}</span>
+                      <span className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.8)]" />
+                    </div>
+                  ),
+                )}
+              </div>
             </div>
           </div>
         </div>
