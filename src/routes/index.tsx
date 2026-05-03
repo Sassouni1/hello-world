@@ -124,9 +124,11 @@ function Index() {
     if (!pairingCode || !user || pairingBusy) return;
     let cancelled = false;
     setPairingBusy(true);
-    supabase
-      .rpc("consume_bridge_pairing_code", { pairing_code: pairingCode })
-      .then(async ({ data, error }) => {
+    (async () => {
+      try {
+        const { data, error } = await supabase.rpc("consume_bridge_pairing_code", {
+          pairing_code: pairingCode,
+        });
         if (cancelled) return;
         if (error) {
           setNotice(error.message);
@@ -141,10 +143,10 @@ function Index() {
         window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
         await loadAccounts(user.id);
         if (accountId) setActiveAccountId(accountId);
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setPairingBusy(false);
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };

@@ -14,33 +14,6 @@ export type Database = {
   }
   public: {
     Tables: {
-      bridge_accounts: {
-        Row: {
-          created_at: string
-          display_name: string
-          id: string
-          owner_user_id: string
-          status: string
-          updated_at: string
-        }
-        Insert: {
-          created_at?: string
-          display_name?: string
-          id?: string
-          owner_user_id: string
-          status?: string
-          updated_at?: string
-        }
-        Update: {
-          created_at?: string
-          display_name?: string
-          id?: string
-          owner_user_id?: string
-          status?: string
-          updated_at?: string
-        }
-        Relationships: []
-      }
       bridge_account_members: {
         Row: {
           account_id: string
@@ -69,6 +42,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      bridge_accounts: {
+        Row: {
+          created_at: string
+          display_name: string
+          id: string
+          owner_user_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string
+          id?: string
+          owner_user_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string
+          id?: string
+          owner_user_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       bridge_commands: {
         Row: {
