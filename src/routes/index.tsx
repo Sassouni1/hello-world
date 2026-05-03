@@ -271,22 +271,17 @@ function Index() {
 
   const createAccount = async (ownerUserId = user?.id) => {
     if (!ownerUserId) return null;
-    const { data, error } = await supabase
-      .from("bridge_accounts")
-      .insert({
-        owner_user_id: ownerUserId,
-        display_name: "Personal console",
-        status: "disconnected",
-      })
-      .select("*")
-      .single();
+    const { data, error } = await supabase.rpc("create_bridge_account", {
+      display_name: "Personal console",
+    });
     if (error) {
       setNotice(error.message);
       return null;
     }
-    setAccounts((current) => [...current, data]);
-    setActiveAccountId(data.id);
-    return data;
+    const account = data as Account;
+    setAccounts((current) => [...current, account]);
+    setActiveAccountId(account.id);
+    return account;
   };
 
   const refreshBridgeData = async (accountId: string) => {
@@ -480,6 +475,8 @@ function Index() {
         <SignedOut
           copied={copied}
           copyInstall={() => copyText("install", installCommand)}
+          onStartConsole={() => void signInAnonymously()}
+          starting={busy || pairingBusy}
         />
       ) : (
         <section className="grid min-h-[calc(100vh-73px)] grid-cols-1 lg:grid-cols-[360px_1fr_420px]">
