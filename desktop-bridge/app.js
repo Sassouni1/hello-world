@@ -69,6 +69,8 @@ const state = {
   browserStatusTimer: null,
   browserShotUrl: "",
   browserDomActive: false,
+  browserUrlAuto: "",
+  browserUrlManual: false,
 };
 
 const els = {
@@ -1463,6 +1465,8 @@ const selectChat = async (id) => {
   state.view = "chat";
   state.doneChatIds.delete(id);
   state.selectedChatId = id;
+  state.browserUrlAuto = "";
+  state.browserUrlManual = false;
   state.isComposingNewChat = false;
   stopChatPolling();
   els.automationNav.classList.remove("is-active");
@@ -1481,11 +1485,14 @@ const selectChat = async (id) => {
 
   const loaded = await loadSelectedChat(id, { stickToBottom: true });
   if (loaded) startChatPolling();
+  loadBrowserStatus();
 };
 
 const startNewChat = () => {
   state.view = "chat";
   state.selectedChatId = null;
+  state.browserUrlAuto = "";
+  state.browserUrlManual = false;
   state.isComposingNewChat = true;
   stopChatPolling();
   els.automationNav.classList.remove("is-active");
@@ -1820,7 +1827,10 @@ const renderAutomations = () => {
 
 const normalizeUrl = () => {
   let url = els.browserUrl.value.trim();
-  if (!url) url = "http://localhost:5173";
+  if (!url) {
+    if (state.selectedChatId) return "";
+    url = "http://localhost:5173";
+  }
   if (!/^https?:\/\//i.test(url)) {
     url = /^(localhost|127\.|0\.0\.0\.0|\[::1\]|[a-z0-9.-]+:\d+)/i.test(url)
       ? `http://${url}`
@@ -1830,8 +1840,15 @@ const normalizeUrl = () => {
   return url;
 };
 
+const selectedChatBrowserQuery = () =>
+  state.selectedChatId ? `?chatId=${encodeURIComponent(state.selectedChatId)}` : "";
+
 const showFramePreview = () => {
   const url = normalizeUrl();
+  if (!url) {
+    alert("No reachable Vite browser was found for the selected chat.");
+    return "";
+  }
   state.browserDomActive = false;
   els.browserShot.hidden = true;
   els.browserFrame.hidden = false;
@@ -1845,12 +1862,41 @@ const showFramePreview = () => {
 const setBrowserLiveStatus = (payload = {}) => {
   const active = Boolean(payload.active);
   const title = payload.title ? ` · ${payload.title}` : "";
-  const url = payload.url || payload.detectedUrl || normalizeUrl();
-  els.browserLiveStatus.textContent = active ? `Live · ${url}${title}` : payload.detectedUrl ? `Detected Vite at ${payload.detectedUrl}` : "Idle";
-  els.browserLiveStatus.classList.toggle("is-live", active);
-  if (payload.detectedUrl && !els.browserUrl.value.trim()) {
-    els.browserUrl.value = payload.detectedUrl;
+  const selectedTarget = payload.selectedBrowser?.targetUrl || payload.detectedUrl || "";
+  const activeUrl = payload.url || "";
+  if (
+    selectedTarget &&
+    (!state.browserUrlManual ||
+      !els.browserUrl.value.trim() ||
+      els.browserUrl.value === state.browserUrlAuto ||
+      els.browserUrl.value === "http://localhost:5173")
+  ) {
+    els.browserUrl.value = selectedTarget;
+    state.browserUrlAuto = selectedTarget;
+    state.browserUrlManual = false;
   }
+  if (payload.selectedBrowser && !selectedTarget) {
+    if (!state.browserUrlManual) {
+      els.browserUrl.value = "";
+      state.browserUrlAuto = "";
+    }
+    state.browserDomActive = false;
+    els.browserFrame.removeAttribute("src");
+    els.browserFrame.removeAttribute("srcdoc");
+    els.browserFrame.hidden = true;
+    els.browserShot.hidden = true;
+    els.browserLiveStatus.textContent = "No reachable Vite browser for the selected chat";
+  } else if (active && activeUrl) {
+    els.browserLiveStatus.textContent =
+      selectedTarget && activeUrl !== selectedTarget
+        ? `Live · ${activeUrl}${title} · selected chat target ${selectedTarget}`
+        : `Live · ${activeUrl}${title}`;
+  } else if (selectedTarget) {
+    els.browserLiveStatus.textContent = `Selected chat Vite · ${selectedTarget}`;
+  } else {
+    els.browserLiveStatus.textContent = "Idle";
+  }
+  els.browserLiveStatus.classList.toggle("is-live", Boolean(selectedTarget || (active && !payload.selectedBrowser)));
   const logs = Array.isArray(payload.logs) ? payload.logs.slice(-8) : [];
   els.browserConsole.textContent = logs.length
     ? logs.map((log) => `[${log.level || log.type || "log"}] ${log.text || log.url || ""}`).join("\n")
@@ -1859,11 +1905,8 @@ const setBrowserLiveStatus = (payload = {}) => {
 
 const loadBrowserStatus = async () => {
   try {
-    const payload = await api("/api/vite-browser/status");
+    const payload = await api(`/api/vite-browser/status${selectedChatBrowserQuery()}`);
     setBrowserLiveStatus(payload);
-    if (payload.detectedUrl && els.browserUrl.value === "http://localhost:5173" && payload.detectedUrl !== els.browserUrl.value) {
-      els.browserUrl.value = payload.detectedUrl;
-    }
     return payload;
   } catch (error) {
     els.browserLiveStatus.textContent = error.message;
@@ -1909,7 +1952,8 @@ const renderViteDomMirror = (payload = {}) => {
 };
 
 const fetchLiveBrowserDom = async () => {
-  const payload = await api(`/api/vite-browser/dom?t=${Date.now()}`);
+  const separator = selectedChatBrowserQuery() ? "&" : "?";
+  const payload = await api(`/api/vite-browser/dom${selectedChatBrowserQuery()}${separator}t=${Date.now()}`);
   return renderViteDomMirror(payload);
 };
 
@@ -1917,7 +1961,7 @@ const sendViteBrowserInput = async (payload) => {
   const response = await api("/api/vite-browser/input", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, chatId: state.selectedChatId || "" }),
   });
   setBrowserLiveStatus(response);
   fetchLiveBrowserFrame();
@@ -1961,7 +2005,7 @@ const startViteBrowser = async () => {
     const payload = await api("/api/vite-browser/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: normalizeUrl() }),
+      body: JSON.stringify({ url: normalizeUrl(), chatId: state.selectedChatId || "" }),
     });
     if (payload.url) els.browserUrl.value = payload.url;
     setBrowserLiveStatus(payload);
@@ -1994,7 +2038,8 @@ const captureScreenshot = async (options = {}) => {
   }
 };
 
-const loadFrame = () => {
+const loadFrame = async () => {
+  if (!els.browserUrl.value.trim()) await loadBrowserStatus();
   showFramePreview();
 };
 
@@ -2003,7 +2048,7 @@ const openVisibleBrowser = async () => {
     const payload = await api("/api/vite-browser/reload", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: normalizeUrl() }),
+      body: JSON.stringify({ url: normalizeUrl(), chatId: state.selectedChatId || "" }),
     });
     setBrowserLiveStatus(payload);
     startLiveBrowserPolling();
@@ -2403,6 +2448,9 @@ els.browserNavBtn.addEventListener("click", () => {
 });
 els.browserShot.addEventListener("click", clickVitePreview);
 els.browserShot.addEventListener("wheel", scrollVitePreview, { passive: false });
+els.browserUrl.addEventListener("input", () => {
+  state.browserUrlManual = true;
+});
 els.browserTypeBtn.addEventListener("click", typeIntoVitePreview);
 els.browserEnterBtn.addEventListener("click", pressViteEnter);
 els.browserTextInput.addEventListener("keydown", (event) => {
@@ -2430,8 +2478,9 @@ window.addEventListener("resize", () => {
 });
 window.visualViewport?.addEventListener("resize", syncViewportHeight);
 
-els.browserUrl.value = "http://localhost:5173";
-showFramePreview();
+els.browserUrl.value = "";
+els.browserFrame.hidden = true;
+els.browserShot.hidden = true;
 loadBrowserStatus();
 setPhonePaired(state.phonePaired);
 syncPromptSize();

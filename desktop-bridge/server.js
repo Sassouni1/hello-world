@@ -3814,6 +3814,7 @@ const fetchTextWithTimeout = (target, timeoutMs = 650) =>
 const cleanDetectedUrl = (value) => {
   const raw = String(value || "")
     .trim()
+    .split(/\\n|\\r|\n|\r|\s+##\s+|["'<>]/)[0]
     .replace(/[)`\].,;]+$/g, "");
   try {
     const parsed = new URL(raw);
@@ -3822,6 +3823,48 @@ const cleanDetectedUrl = (value) => {
     return parsed.toString();
   } catch {
     return "";
+  }
+};
+
+const urlOrigin = (value) => {
+  const url = cleanDetectedUrl(value);
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return "";
+  }
+};
+
+const browserSessionForChat = (sessionId) =>
+  listBrowserSessions().find((session) => session.id === String(sessionId || "")) || null;
+
+const urlIsAllowedForBrowserSession = (url, allowedOrigins = []) => {
+  if (!allowedOrigins.length) return true;
+  const origin = urlOrigin(url);
+  return Boolean(origin && allowedOrigins.includes(origin));
+};
+
+const isLikelyAppRoute = (value) => {
+  const url = cleanDetectedUrl(value);
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    const pathname = parsed.pathname || "/";
+    if (
+      pathname === "/@vite/client" ||
+      pathname.startsWith("/node_modules/") ||
+      pathname.startsWith("/src/") ||
+      pathname.startsWith("/api/") ||
+      pathname.startsWith("/jarvis-browser-api/")
+    )
+      return false;
+    if (/\.(?:tsx?|jsx?|css|map|json|png|jpe?g|gif|webp|svg|ico|woff2?)$/i.test(pathname))
+      return false;
+    return true;
+  } catch {
+    return false;
   }
 };
 
@@ -3850,6 +3893,74 @@ const extractCurrentUrlMentions = (text) => {
     if (clean) urls.push(clean);
   }
   return urls;
+};
+
+const extractLocalUrlMentions = (text) => {
+  const urls = [];
+  const source = String(text || "");
+  for (const match of source.matchAll(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d+(?:\/[^\s"'<>)]*)?/gi)) {
+    const clean = cleanDetectedUrl(match[0]);
+    if (clean) urls.push(clean);
+  }
+  return urls;
+};
+
+const selectedChatViteTarget = async (sessionId) => {
+  const chatId = String(sessionId || "");
+  if (!chatId) return null;
+  const browserSession = browserSessionForChat(chatId);
+  const allowedOrigins = browserSession?.allowedOrigins || [];
+  const candidates = [];
+  const seen = new Set();
+
+  const addCandidate = (url, source, score) => {
+    const clean = cleanDetectedUrl(url);
+    if (!clean || seen.has(clean)) return;
+    if (!urlIsAllowedForBrowserSession(clean, allowedOrigins)) return;
+    if (!isLikelyAppRoute(clean)) return;
+    seen.add(clean);
+    candidates.push({ url: clean, source, score });
+  };
+
+  const file = sessionFileById().get(chatId);
+  if (file && fs.existsSync(file)) {
+    const { records } = readSessionRecords(file, { tailBytes: 512 * 1024 });
+    for (const item of records.slice().reverse()) {
+      const payload = item.payload || {};
+      let text = "";
+      if (item.type === "response_item" && payload.type === "message") {
+        text = textFromContent(payload.content);
+      } else if (item.type === "event_msg") {
+        text = [payload.message, payload.text, payload.output, payload.url].filter(Boolean).join("\n");
+      } else if (item.type === "response_item" && payload.type?.includes("function")) {
+        text = JSON.stringify(payload);
+      }
+      if (!text) continue;
+      for (const url of extractCurrentUrlMentions(text).reverse()) addCandidate(url, "current-url", 120);
+      for (const url of extractLocalUrlMentions(text).reverse()) addCandidate(url, "session-url", 60);
+    }
+  }
+
+  for (const origin of allowedOrigins) addCandidate(origin, "browser-session-origin", 40);
+
+  const reachable = [];
+  for (const candidate of candidates) {
+    const isVite = await isReachableViteUrl(candidate.url);
+    if (isVite) reachable.push({ ...candidate, isVite });
+  }
+
+  reachable.sort((a, b) => b.score - a.score);
+  const target = reachable[0] || null;
+  return {
+    chatId,
+    targetUrl: target?.url || "",
+    source: target?.source || "",
+    allowedOrigins,
+    browserSession: browserSession
+      ? { id: browserSession.id, updatedAt: browserSession.updatedAt, allowedOrigins }
+      : null,
+    candidates: reachable.slice(0, 8),
+  };
 };
 
 const recentCodexViteUrl = async () => {
@@ -3883,7 +3994,11 @@ const recentCodexViteUrl = async () => {
   return "";
 };
 
-const detectViteUrl = async () => {
+const detectViteUrl = async (sessionId = "") => {
+  if (sessionId) {
+    const selectedTarget = await selectedChatViteTarget(sessionId);
+    return selectedTarget?.targetUrl || "";
+  }
   const recent = await recentCodexViteUrl();
   if (recent) return recent;
   const ports = [8081, 8082, 5173, 5174, 5175, 5176, 4173, 3000, 8080];
@@ -3895,7 +4010,7 @@ const detectViteUrl = async () => {
   return "";
 };
 
-const viteBrowserStatus = async () => {
+const viteBrowserStatus = async (sessionId = "") => {
   let title = "";
   if (viteBrowser.page) {
     try {
@@ -3911,13 +4026,14 @@ const viteBrowserStatus = async () => {
     lastFrameAt: viteBrowser.lastFrameAt,
     lastDomAt: viteBrowser.lastDomAt,
     headless: viteBrowser.headless,
-    detectedUrl: await detectViteUrl(),
+    detectedUrl: await detectViteUrl(sessionId),
+    selectedBrowser: sessionId ? await selectedChatViteTarget(sessionId) : null,
     logs: viteBrowser.logs.slice(-16),
   };
 };
 
-const ensureViteBrowser = async (target) => {
-  const url = normalizeBrowserTarget(target);
+const ensureViteBrowser = async (target, sessionId = "") => {
+  const url = normalizeBrowserTarget(target || (await detectViteUrl(sessionId)));
   const { chromium } = require("playwright");
   if (!viteBrowser.browser) {
     const visibleBrowser = /^(1|true|yes)$/i.test(String(process.env.VLIX_VISIBLE_BROWSER || ""));
@@ -3940,7 +4056,7 @@ const ensureViteBrowser = async (target) => {
   await viteBrowser.page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 });
   viteBrowser.url = url;
   rememberViteBrowserLog({ type: "browser", level: "info", text: `Opened ${url}` });
-  return viteBrowserStatus();
+  return viteBrowserStatus(sessionId);
 };
 
 const requireVitePage = () => {
@@ -4129,7 +4245,7 @@ const applyViteBrowserInput = async (input = {}) => {
   } else {
     throw new Error("Unsupported Vite browser input.");
   }
-  return viteBrowserStatus();
+  return viteBrowserStatus(input.chatId || "");
 };
 
 const handleViteBrowserApi = async (req, res, reqUrl) => {
@@ -4145,7 +4261,7 @@ const handleViteBrowserApi = async (req, res, reqUrl) => {
   }
 
   if (req.method === "GET" && reqUrl.pathname === "/api/vite-browser/status") {
-    sendLocalApi(req, res, 200, await viteBrowserStatus());
+    sendLocalApi(req, res, 200, await viteBrowserStatus(reqUrl.searchParams.get("chatId") || ""));
     return true;
   }
 
@@ -4155,7 +4271,7 @@ const handleViteBrowserApi = async (req, res, reqUrl) => {
       return true;
     }
     try {
-      const status = await viteBrowserStatus();
+      const status = await viteBrowserStatus(reqUrl.searchParams.get("chatId") || "");
       const mirror = await captureViteDomSnapshot();
       sendLocalApi(req, res, 200, { ...status, mirror });
     } catch (error) {
@@ -4166,33 +4282,45 @@ const handleViteBrowserApi = async (req, res, reqUrl) => {
 
   if (req.method === "POST" && reqUrl.pathname === "/api/vite-browser/start") {
     const body = await readBody(req);
-    sendLocalApi(
-      req,
-      res,
-      200,
-      await ensureViteBrowser(body.url || (await detectViteUrl()) || "http://localhost:5173"),
-    );
+    const chatId = body.chatId || "";
+    const target = body.url || (await detectViteUrl(chatId));
+    if (!target) {
+      sendLocalApi(req, res, 409, {
+        error: chatId
+          ? "The selected chat does not have a reachable Vite browser session."
+          : "No reachable Vite browser was detected.",
+        selectedBrowser: chatId ? await selectedChatViteTarget(chatId) : null,
+      });
+      return true;
+    }
+    sendLocalApi(req, res, 200, await ensureViteBrowser(target, chatId));
     return true;
   }
 
   if (req.method === "POST" && reqUrl.pathname === "/api/vite-browser/reload") {
     const body = await readBody(req);
+    const chatId = body.chatId || "";
     if (!viteBrowser.page) {
-      sendLocalApi(
-        req,
-        res,
-        200,
-        await ensureViteBrowser(body.url || (await detectViteUrl()) || "http://localhost:5173"),
-      );
+      const target = body.url || (await detectViteUrl(chatId));
+      if (!target) {
+        sendLocalApi(req, res, 409, {
+          error: chatId
+            ? "The selected chat does not have a reachable Vite browser session."
+            : "No reachable Vite browser was detected.",
+          selectedBrowser: chatId ? await selectedChatViteTarget(chatId) : null,
+        });
+        return true;
+      }
+      sendLocalApi(req, res, 200, await ensureViteBrowser(target, chatId));
       return true;
     }
     if (body.url) {
-      sendLocalApi(req, res, 200, await ensureViteBrowser(body.url));
+      sendLocalApi(req, res, 200, await ensureViteBrowser(body.url, chatId));
       return true;
     }
     await viteBrowser.page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 });
     rememberViteBrowserLog({ type: "browser", level: "info", text: "Reloaded Vite browser" });
-    sendLocalApi(req, res, 200, await viteBrowserStatus());
+    sendLocalApi(req, res, 200, await viteBrowserStatus(chatId));
     return true;
   }
 
