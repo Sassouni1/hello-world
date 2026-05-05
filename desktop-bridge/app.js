@@ -68,6 +68,7 @@ const state = {
   browserLiveTimer: null,
   browserStatusTimer: null,
   browserShotUrl: "",
+  browserDomActive: false,
 };
 
 const els = {
@@ -1831,9 +1832,13 @@ const normalizeUrl = () => {
 
 const showFramePreview = () => {
   const url = normalizeUrl();
+  state.browserDomActive = false;
   els.browserShot.hidden = true;
   els.browserFrame.hidden = false;
+  els.browserFrame.removeAttribute("srcdoc");
   els.browserFrame.src = url;
+  els.browserLiveStatus.textContent = `Local Vite iframe · ${url}`;
+  els.browserLiveStatus.classList.add("is-live");
   return url;
 };
 
@@ -1869,6 +1874,7 @@ const loadBrowserStatus = async () => {
 
 const fetchLiveBrowserFrame = async () => {
   try {
+    if (await fetchLiveBrowserDom()) return;
     const response = await fetch(`/api/vite-browser/screenshot?t=${Date.now()}`);
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
@@ -1880,9 +1886,31 @@ const fetchLiveBrowserFrame = async () => {
     els.browserShot.src = state.browserShotUrl;
     els.browserShot.hidden = false;
     els.browserFrame.hidden = true;
+    state.browserDomActive = false;
   } catch (error) {
     console.warn(error.message);
   }
+};
+
+const renderViteDomMirror = (payload = {}) => {
+  const mirror = payload.mirror || payload;
+  if (!mirror?.html) return false;
+  if (state.browserShotUrl) {
+    URL.revokeObjectURL(state.browserShotUrl);
+    state.browserShotUrl = "";
+  }
+  els.browserFrame.removeAttribute("src");
+  els.browserFrame.srcdoc = mirror.html;
+  els.browserFrame.hidden = false;
+  els.browserShot.hidden = true;
+  state.browserDomActive = true;
+  setBrowserLiveStatus({ ...payload, lastDomAt: mirror.capturedAt, url: mirror.url || payload.url, title: mirror.title || payload.title });
+  return true;
+};
+
+const fetchLiveBrowserDom = async () => {
+  const payload = await api(`/api/vite-browser/dom?t=${Date.now()}`);
+  return renderViteDomMirror(payload);
 };
 
 const sendViteBrowserInput = async (payload) => {
@@ -1895,6 +1923,22 @@ const sendViteBrowserInput = async (payload) => {
   fetchLiveBrowserFrame();
   return response;
 };
+
+window.addEventListener("message", (event) => {
+  const data = event.data || {};
+  if (data.source !== "vlix-vite-dom") return;
+  const type = ["click", "scroll", "type", "press"].includes(data.type) ? data.type : "click";
+  sendViteBrowserInput({
+    type,
+    nodeId: data.nodeId || "",
+    xRatio: data.xRatio,
+    yRatio: data.yRatio,
+    deltaX: data.deltaX,
+    deltaY: data.deltaY,
+    text: data.text,
+    key: data.key,
+  }).catch((error) => console.warn(error.message));
+});
 
 const stopLiveBrowserPolling = () => {
   clearInterval(state.browserLiveTimer);
@@ -1951,7 +1995,7 @@ const captureScreenshot = async (options = {}) => {
 };
 
 const loadFrame = () => {
-  startViteBrowser();
+  showFramePreview();
 };
 
 const openVisibleBrowser = async () => {
@@ -2350,7 +2394,7 @@ els.composer.addEventListener("submit", sendPrompt);
 els.stopBtn.addEventListener("click", stopCurrentTurn);
 els.previewBtn.addEventListener("click", loadFrame);
 els.shotBtn.addEventListener("click", () => captureScreenshot());
-els.openBrowserBtn.addEventListener("click", openVisibleBrowser);
+els.openBrowserBtn.addEventListener("click", startViteBrowser);
 els.viteStopBtn.addEventListener("click", stopViteBrowser);
 els.browserViewBtn.addEventListener("click", openBrowserPanel);
 els.browserNavBtn.addEventListener("click", () => {

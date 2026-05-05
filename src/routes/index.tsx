@@ -115,6 +115,8 @@ function Index() {
   const [pairingQr, setPairingQr] = useState("");
   const [viteFrameUrl, setViteFrameUrl] = useState("");
   const [viteFrameAt, setViteFrameAt] = useState("");
+  const [viteDomHtml, setViteDomHtml] = useState("");
+  const [viteDomAt, setViteDomAt] = useState("");
   const [viteText, setViteText] = useState("");
   const [viteBusy, setViteBusy] = useState(false);
   const autoStartedFromBridgeRef = useRef(false);
@@ -618,27 +620,58 @@ function Index() {
   };
 
   const viteFramePath = user && activeAccount ? `${user.id}/${activeAccount.id}/vite-browser/latest.jpg` : "";
+  const viteDomPath = user && activeAccount ? `${user.id}/${activeAccount.id}/vite-browser/latest-dom.json` : "";
+
+  const loadViteDom = async () => {
+    if (!viteDomPath) return false;
+    const { data, error } = await supabase.storage
+      .from("bridge-attachments")
+      .createSignedUrl(viteDomPath, 90);
+    if (error || !data?.signedUrl) return false;
+    const response = await fetch(`${data.signedUrl}${data.signedUrl.includes("?") ? "&" : "?"}t=${Date.now()}`, {
+      cache: "no-store",
+    });
+    if (!response.ok) return false;
+    const mirror = (await response.json()) as { html?: string; capturedAt?: string };
+    if (!mirror.html) return false;
+    setViteDomHtml(mirror.html);
+    setViteDomAt(
+      new Date(mirror.capturedAt || Date.now()).toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit",
+      }),
+    );
+    return true;
+  };
 
   const loadViteFrame = async () => {
-    if (!viteFramePath) return;
+    if (!viteFramePath) return false;
     const { data, error } = await supabase.storage
       .from("bridge-attachments")
       .createSignedUrl(viteFramePath, 90);
-    if (error || !data?.signedUrl) return;
+    if (error || !data?.signedUrl) return false;
     setViteFrameUrl(`${data.signedUrl}${data.signedUrl.includes("?") ? "&" : "?"}t=${Date.now()}`);
     setViteFrameAt(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }));
+    return true;
   };
 
   useEffect(() => {
     setViteFrameUrl("");
     setViteFrameAt("");
-    if (!viteFramePath) return;
-    void loadViteFrame();
-    const timer = window.setInterval(() => void loadViteFrame(), 1200);
+    setViteDomHtml("");
+    setViteDomAt("");
+    if (!viteFramePath && !viteDomPath) return;
+    const refresh = async () => {
+      const hasDom = await loadViteDom();
+      if (!hasDom) await loadViteFrame();
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 1200);
     return () => window.clearInterval(timer);
-    // loadViteFrame is intentionally recreated with the active private storage path.
+    // Vite mirror loaders are intentionally recreated with the active private storage paths.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viteFramePath]);
+  }, [viteFramePath, viteDomPath]);
 
   const queueBrowserCommand = async (payload: Record<string, unknown>) => {
     if (!user || !activeAccount) {
@@ -664,6 +697,29 @@ function Index() {
       setViteBusy(false);
     }
   };
+
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      const data = event.data as Record<string, unknown> | null;
+      if (!data || data.source !== "vlix-vite-dom") return;
+      const action =
+        data.type === "scroll" || data.type === "type" || data.type === "press" ? data.type : "click";
+      void queueBrowserCommand({
+        action,
+        nodeId: data.nodeId || "",
+        xRatio: data.xRatio,
+        yRatio: data.yRatio,
+        deltaX: data.deltaX,
+        deltaY: data.deltaY,
+        text: data.text,
+        key: data.key,
+      });
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+    // The handler needs the latest account/user values from queueBrowserCommand.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, activeAccount?.id]);
 
   const viteFramePoint = (event: MouseEvent<HTMLImageElement>) => {
     const image = viteFrameRef.current;
@@ -988,7 +1044,14 @@ function Index() {
                   </Button>
                 </div>
                 <div className="overflow-hidden rounded-2xl border border-white/10 bg-black">
-                  {viteFrameUrl ? (
+                  {viteDomHtml ? (
+                    <iframe
+                      title="Live Vite DOM mirror from desktop"
+                      className="aspect-[1280/820] w-full bg-white"
+                      sandbox="allow-scripts allow-forms"
+                      srcDoc={viteDomHtml}
+                    />
+                  ) : viteFrameUrl ? (
                     <img
                       ref={viteFrameRef}
                       alt="Live Vite browser from desktop"
@@ -1015,8 +1078,14 @@ function Index() {
                   )}
                 </div>
                 <div className="flex items-center justify-between text-xs text-white/38">
-                  <span>{viteFrameAt ? `Latest frame ${viteFrameAt}` : "Waiting for a desktop frame"}</span>
-                  <span>relay, not localhost</span>
+                  <span>
+                    {viteDomAt
+                      ? `DOM mirror ${viteDomAt}`
+                      : viteFrameAt
+                        ? `Frame fallback ${viteFrameAt}`
+                        : "Waiting for desktop view"}
+                  </span>
+                  <span>{viteDomHtml ? "clickable DOM relay" : "image fallback"}</span>
                 </div>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-2">
                   <input

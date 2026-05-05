@@ -81,6 +81,7 @@ const viteBrowser = {
   url: "",
   startedAt: null,
   lastFrameAt: null,
+  lastDomAt: null,
   headless: false,
   logs: [],
 };
@@ -130,6 +131,7 @@ const closeViteBrowser = async () => {
   viteBrowser.url = "";
   viteBrowser.startedAt = null;
   viteBrowser.lastFrameAt = null;
+  viteBrowser.lastDomAt = null;
   if (browser) {
     try {
       await browser.close();
@@ -460,6 +462,7 @@ const LOCAL_CLOUD_API_PATHS = new Set([
   "/api/pairing/start",
   "/api/vite-browser/status",
   "/api/vite-browser/start",
+  "/api/vite-browser/dom",
   "/api/vite-browser/screenshot",
   "/api/vite-browser/reload",
   "/api/vite-browser/input",
@@ -3464,6 +3467,11 @@ const cloudViteFramePath = (config) => {
   return `${userSegment}/${config.accountId}/vite-browser/latest.jpg`;
 };
 
+const cloudViteDomPath = (config) => {
+  const userSegment = config.userId || "desktop";
+  return `${userSegment}/${config.accountId}/vite-browser/latest-dom.json`;
+};
+
 const uploadLatestViteFrameToCloud = async (config) => {
   if (!viteBrowser.page) return null;
   const image = await viteBrowser.page.screenshot({
@@ -3482,6 +3490,38 @@ const uploadLatestViteFrameToCloud = async (config) => {
     size: image.length,
     updatedAt: viteBrowser.lastFrameAt,
   };
+};
+
+const uploadLatestViteDomToCloud = async (config) => {
+  if (!viteBrowser.page) return null;
+  const mirror = await captureViteDomSnapshot();
+  const body = Buffer.from(JSON.stringify(mirror), "utf8");
+  const pathName = cloudViteDomPath(config);
+  await cloudStorageUpload(config, "bridge-attachments", pathName, body, "application/json");
+  return {
+    bucket: "bridge-attachments",
+    path: pathName,
+    type: "application/json",
+    size: body.length,
+    updatedAt: mirror.capturedAt,
+    nodeCount: mirror.nodeCount,
+  };
+};
+
+const uploadLatestViteMirrorToCloud = async (config) => {
+  if (!viteBrowser.page) return null;
+  const result = {};
+  try {
+    result.dom = await uploadLatestViteDomToCloud(config);
+  } catch (error) {
+    console.warn(`Vlix cloud Vite DOM sync skipped: ${error.message}`);
+  }
+  try {
+    result.frame = await uploadLatestViteFrameToCloud(config);
+  } catch (error) {
+    console.warn(`Vlix cloud Vite frame sync skipped: ${error.message}`);
+  }
+  return result.dom || result.frame ? result : null;
 };
 
 const downloadCloudAttachments = async (config, attachments = []) => {
@@ -3596,7 +3636,7 @@ const completeCloudBrowserCommand = async (config, command) => {
   } else {
     throw new Error(`Unsupported browser action: ${action}`);
   }
-  const frame = viteBrowser.page ? await uploadLatestViteFrameToCloud(config) : null;
+  const frame = viteBrowser.page ? await uploadLatestViteMirrorToCloud(config) : null;
   await cloudUpdateCommand(config, command.id, {
     status: "completed",
     completed_at: new Date().toISOString(),
@@ -3663,9 +3703,9 @@ const pollCloudCommands = async (config) => {
   }
   if (viteBrowser.page && Date.now() - cloudViteFrameSyncAt > 1000) {
     try {
-      await uploadLatestViteFrameToCloud(config);
+      await uploadLatestViteMirrorToCloud(config);
     } catch (error) {
-      console.warn(`Vlix cloud Vite frame sync skipped: ${error.message}`);
+      console.warn(`Vlix cloud Vite mirror sync skipped: ${error.message}`);
     }
   }
 };
@@ -3720,6 +3760,8 @@ const normalizeBrowserTarget = (value) => {
   return parsed.toString();
 };
 
+let recentCodexViteUrlCache = { at: 0, url: "" };
+
 const fetchTextWithTimeout = (target, timeoutMs = 650) =>
   new Promise((resolve) => {
     let settled = false;
@@ -3769,8 +3811,82 @@ const fetchTextWithTimeout = (target, timeoutMs = 650) =>
     });
   });
 
+const cleanDetectedUrl = (value) => {
+  const raw = String(value || "")
+    .trim()
+    .replace(/[)`\].,;]+$/g, "");
+  try {
+    const parsed = new URL(raw);
+    if (!/^https?:$/i.test(parsed.protocol)) return "";
+    if (!["localhost", "127.0.0.1", "0.0.0.0"].includes(parsed.hostname)) return "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+};
+
+const isReachableViteUrl = async (target) => {
+  const url = cleanDetectedUrl(target);
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    const origin = `${parsed.protocol}//${parsed.host}`;
+    const probe = await fetchTextWithTimeout(`${origin}/@vite/client`, 450);
+    return probe.ok && /vite/i.test(probe.body);
+  } catch {
+    return false;
+  }
+};
+
+const extractCurrentUrlMentions = (text) => {
+  const urls = [];
+  const source = String(text || "");
+  for (const match of source.matchAll(/Current URL:\s*(https?:\/\/[^\s"'<>]+)/gi)) {
+    const clean = cleanDetectedUrl(match[1]);
+    if (clean) urls.push(clean);
+  }
+  for (const match of source.matchAll(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d+\/[^\s"'<>]*/gi)) {
+    const clean = cleanDetectedUrl(match[0]);
+    if (clean) urls.push(clean);
+  }
+  return urls;
+};
+
+const recentCodexViteUrl = async () => {
+  if (Date.now() - recentCodexViteUrlCache.at < 5000) return recentCodexViteUrlCache.url;
+  recentCodexViteUrlCache = { at: Date.now(), url: "" };
+  const files = sessionFiles()
+    .map((file) => {
+      try {
+        return { file, mtimeMs: fs.statSync(file).mtimeMs };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .slice(0, 25);
+
+  for (const { file } of files) {
+    const { records } = readSessionRecords(file, { tailBytes: 160 * 1024 });
+    for (const item of records.slice().reverse()) {
+      const payload = item.payload || {};
+      if (item.type !== "response_item" || payload.type !== "message") continue;
+      for (const url of extractCurrentUrlMentions(textFromContent(payload.content)).reverse()) {
+        if (await isReachableViteUrl(url)) {
+          recentCodexViteUrlCache = { at: Date.now(), url };
+          return url;
+        }
+      }
+    }
+  }
+  return "";
+};
+
 const detectViteUrl = async () => {
-  const ports = [5173, 5174, 5175, 5176, 4173, 3000, 8080];
+  const recent = await recentCodexViteUrl();
+  if (recent) return recent;
+  const ports = [8081, 8082, 5173, 5174, 5175, 5176, 4173, 3000, 8080];
   for (const port of ports) {
     const candidate = `http://localhost:${port}`;
     const probe = await fetchTextWithTimeout(`${candidate}/@vite/client`);
@@ -3793,6 +3909,7 @@ const viteBrowserStatus = async () => {
     title,
     startedAt: viteBrowser.startedAt,
     lastFrameAt: viteBrowser.lastFrameAt,
+    lastDomAt: viteBrowser.lastDomAt,
     headless: viteBrowser.headless,
     detectedUrl: await detectViteUrl(),
     logs: viteBrowser.logs.slice(-16),
@@ -3803,21 +3920,17 @@ const ensureViteBrowser = async (target) => {
   const url = normalizeBrowserTarget(target);
   const { chromium } = require("playwright");
   if (!viteBrowser.browser) {
-    try {
-      viteBrowser.browser = await chromium.launch({
-        headless: false,
-        args: ["--window-size=1280,820"],
-      });
-      viteBrowser.headless = false;
-    } catch (error) {
-      viteBrowser.browser = await chromium.launch({ headless: true });
-      viteBrowser.headless = true;
-      rememberViteBrowserLog({
-        type: "browser",
-        level: "warn",
-        text: `Visible browser unavailable, using headless preview: ${error.message}`,
-      });
-    }
+    const visibleBrowser = /^(1|true|yes)$/i.test(String(process.env.VLIX_VISIBLE_BROWSER || ""));
+    viteBrowser.browser = await chromium.launch({
+      headless: !visibleBrowser,
+      args: visibleBrowser ? ["--window-size=1280,820"] : [],
+    });
+    viteBrowser.headless = !visibleBrowser;
+    rememberViteBrowserLog({
+      type: "browser",
+      level: "info",
+      text: visibleBrowser ? "Started visible mirror browser" : "Started headless mirror browser",
+    });
     viteBrowser.startedAt = new Date().toISOString();
   }
   if (!viteBrowser.page || viteBrowser.page.isClosed()) {
@@ -3835,21 +3948,159 @@ const requireVitePage = () => {
   return viteBrowser.page;
 };
 
+const captureViteDomSnapshot = async () => {
+  const page = requireVitePage();
+  const snapshot = await page.evaluate(() => {
+    const interactiveSelector = [
+      "a[href]",
+      "button",
+      "input",
+      "textarea",
+      "select",
+      "summary",
+      "[role='button']",
+      "[tabindex]",
+      "[contenteditable='true']",
+    ].join(",");
+    const liveNodes = Array.from(document.querySelectorAll(interactiveSelector));
+    liveNodes.forEach((node, index) => {
+      if (!node.getAttribute("data-vlix-node-id")) {
+        node.setAttribute("data-vlix-node-id", `vlix-${index + 1}`);
+      }
+    });
+
+    const clone = document.documentElement.cloneNode(true);
+    const sourceInputs = Array.from(document.documentElement.querySelectorAll("input, textarea, select"));
+    const clonedInputs = Array.from(clone.querySelectorAll("input, textarea, select"));
+    clonedInputs.forEach((node, index) => {
+      const source = sourceInputs[index];
+      if (!source) return;
+      if (node.tagName === "TEXTAREA") node.textContent = source.value || "";
+      if (node.tagName === "SELECT") {
+        Array.from(node.options || []).forEach((option) => {
+          option.toggleAttribute("selected", option.value === source.value);
+        });
+      }
+      if (node.tagName === "INPUT") {
+        const type = String(node.getAttribute("type") || "").toLowerCase();
+        if (type === "checkbox" || type === "radio") {
+          node.toggleAttribute("checked", Boolean(source.checked));
+        } else {
+          node.setAttribute("value", source.value || "");
+        }
+      }
+    });
+    clone.querySelectorAll("script").forEach((node) => node.remove());
+    clone.querySelectorAll("*").forEach((node) => {
+      for (const attribute of Array.from(node.attributes || [])) {
+        if (/^on/i.test(attribute.name)) node.removeAttribute(attribute.name);
+      }
+    });
+
+    let head = clone.querySelector("head");
+    if (!head) {
+      head = document.createElement("head");
+      clone.insertBefore(head, clone.firstChild);
+    }
+    const base = document.createElement("base");
+    base.href = location.href;
+    head.prepend(base);
+
+    const mirrorStyle = document.createElement("style");
+    mirrorStyle.textContent = `
+      html, body { min-height: 100%; }
+      body { margin: 0; cursor: default; }
+      [data-vlix-node-id] { cursor: pointer; }
+      [data-vlix-node-id]:hover { outline: 2px solid rgba(45, 212, 255, .72); outline-offset: 2px; }
+      * { -webkit-tap-highlight-color: rgba(45, 212, 255, .22); }
+    `;
+    head.appendChild(mirrorStyle);
+
+    const body = clone.querySelector("body") || clone;
+    const bridgeScript = document.createElement("script");
+    bridgeScript.textContent = `
+      (() => {
+        const send = (payload) => parent.postMessage({ source: "vlix-vite-dom", ...payload }, "*");
+        const ratios = (event) => {
+          const rect = document.documentElement.getBoundingClientRect();
+          return {
+            xRatio: rect.width ? Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) : 0.5,
+            yRatio: rect.height ? Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) : 0.5
+          };
+        };
+        const nodeId = (event) => event.target?.closest?.("[data-vlix-node-id]")?.getAttribute("data-vlix-node-id") || "";
+        document.addEventListener("click", (event) => {
+          send({ type: "click", nodeId: nodeId(event), ...ratios(event) });
+          event.preventDefault();
+          event.stopPropagation();
+        }, true);
+        document.addEventListener("submit", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }, true);
+        document.addEventListener("wheel", (event) => {
+          send({ type: "scroll", nodeId: nodeId(event), deltaX: event.deltaX, deltaY: event.deltaY, ...ratios(event) });
+        }, { passive: true, capture: true });
+        document.addEventListener("keydown", (event) => {
+          const id = nodeId(event);
+          if (event.key.length === 1 && !event.metaKey && !event.ctrlKey) {
+            send({ type: "type", nodeId: id, text: event.key });
+          } else if (["Enter", "Backspace", "Delete", "Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+            send({ type: "press", nodeId: id, key: event.key });
+          }
+        }, true);
+      })();
+    `;
+    body.appendChild(bridgeScript);
+
+    return {
+      ok: true,
+      url: location.href,
+      title: document.title || "",
+      capturedAt: new Date().toISOString(),
+      nodeCount: liveNodes.length,
+      html: `<!doctype html>\n${clone.outerHTML}`,
+    };
+  });
+  viteBrowser.lastDomAt = snapshot.capturedAt;
+  return snapshot;
+};
+
 const applyViteBrowserInput = async (input = {}) => {
   const page = requireVitePage();
   const type = String(input.type || "").trim();
   const viewport = page.viewportSize() || { width: 1280, height: 820 };
+  const nodeId = String(input.nodeId || "").replace(/[^\w:-]/g, "");
   if (type === "click") {
-    const xRatio = Math.max(0, Math.min(1, Number(input.xRatio)));
-    const yRatio = Math.max(0, Math.min(1, Number(input.yRatio)));
-    const x = Math.round(xRatio * viewport.width);
-    const y = Math.round(yRatio * viewport.height);
-    await page.mouse.click(x, y, {
-      button: input.button === "right" ? "right" : "left",
-      clickCount: Number(input.clickCount) || 1,
-    });
-    rememberViteBrowserLog({ type: "input", level: "info", text: `Clicked ${x}, ${y}` });
+    let clickedNode = false;
+    if (nodeId) {
+      try {
+        await page.locator(`[data-vlix-node-id="${nodeId}"]`).first().click({
+          timeout: 1200,
+          button: input.button === "right" ? "right" : "left",
+          clickCount: Number(input.clickCount) || 1,
+        });
+        clickedNode = true;
+        rememberViteBrowserLog({ type: "input", level: "info", text: `Clicked DOM node ${nodeId}` });
+      } catch {}
+    }
+    if (!clickedNode) {
+      const xRatio = Math.max(0, Math.min(1, Number(input.xRatio)));
+      const yRatio = Math.max(0, Math.min(1, Number(input.yRatio)));
+      const x = Math.round(xRatio * viewport.width);
+      const y = Math.round(yRatio * viewport.height);
+      await page.mouse.click(x, y, {
+        button: input.button === "right" ? "right" : "left",
+        clickCount: Number(input.clickCount) || 1,
+      });
+      rememberViteBrowserLog({ type: "input", level: "info", text: `Clicked ${x}, ${y}` });
+    }
   } else if (type === "scroll") {
+    if (nodeId) {
+      try {
+        await page.locator(`[data-vlix-node-id="${nodeId}"]`).first().hover({ timeout: 800 });
+      } catch {}
+    }
     await page.mouse.wheel(Number(input.deltaX) || 0, Number(input.deltaY) || 0);
     rememberViteBrowserLog({
       type: "input",
@@ -3858,11 +4109,21 @@ const applyViteBrowserInput = async (input = {}) => {
     });
   } else if (type === "type") {
     const text = String(input.text || "");
+    if (nodeId) {
+      try {
+        await page.locator(`[data-vlix-node-id="${nodeId}"]`).first().focus({ timeout: 800 });
+      } catch {}
+    }
     if (text) await page.keyboard.type(text, { delay: 8 });
     rememberViteBrowserLog({ type: "input", level: "info", text: `Typed ${text.length} chars` });
   } else if (type === "press") {
     const key = String(input.key || "").trim();
     if (!key) throw new Error("Provide a key to press.");
+    if (nodeId) {
+      try {
+        await page.locator(`[data-vlix-node-id="${nodeId}"]`).first().focus({ timeout: 800 });
+      } catch {}
+    }
     await page.keyboard.press(key);
     rememberViteBrowserLog({ type: "input", level: "info", text: `Pressed ${key}` });
   } else {
@@ -3885,6 +4146,21 @@ const handleViteBrowserApi = async (req, res, reqUrl) => {
 
   if (req.method === "GET" && reqUrl.pathname === "/api/vite-browser/status") {
     sendLocalApi(req, res, 200, await viteBrowserStatus());
+    return true;
+  }
+
+  if (req.method === "GET" && reqUrl.pathname === "/api/vite-browser/dom") {
+    if (!viteBrowser.page) {
+      sendLocalApi(req, res, 409, { error: "Start the Vite browser first." });
+      return true;
+    }
+    try {
+      const status = await viteBrowserStatus();
+      const mirror = await captureViteDomSnapshot();
+      sendLocalApi(req, res, 200, { ...status, mirror });
+    } catch (error) {
+      sendLocalApi(req, res, 500, { error: error.message || "DOM mirror failed." });
+    }
     return true;
   }
 
