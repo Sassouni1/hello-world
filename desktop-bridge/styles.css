@@ -1583,7 +1583,7 @@ body.is-phone-session .phone-pair-banner:not([hidden]) {
 }
 
 body.is-browser-view .app-shell {
-  grid-template-columns: 330px minmax(0, 1fr) 360px;
+  grid-template-columns: 330px minmax(0, 0.8fr) minmax(520px, 44vw);
 }
 
 body.is-browser-view .browser-panel {
@@ -1693,13 +1693,13 @@ body.is-browser-view .browser-panel {
 
 .preview-frame {
   margin-top: 12px;
-  height: 210px;
+  height: clamp(360px, 58vh, 620px);
   border-radius: 15px;
   overflow: hidden;
   border: 1px solid #383838;
   background: #181818;
-  touch-action: none;
-  cursor: crosshair;
+  touch-action: auto;
+  cursor: default;
 }
 
 .preview-frame iframe {
@@ -1724,6 +1724,10 @@ body.is-browser-view .browser-panel {
   grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
   margin-top: 10px;
+}
+
+.browser-remote-input[hidden] {
+  display: none;
 }
 
 .browser-remote-input input {
@@ -2254,7 +2258,7 @@ body.is-browser-view .browser-panel {
     right: 0;
     bottom: 0;
     z-index: 42;
-    width: min(390px, calc(100vw - 24px));
+    width: min(560px, calc(100vw - 24px));
     box-shadow: -22px 0 60px rgba(0, 0, 0, 0.45);
   }
 }
@@ -2747,7 +2751,7 @@ body.is-browser-view .browser-panel {
   }
 
   .preview-frame {
-    height: 180px;
+    height: min(440px, 52vh);
   }
 
   .pairing-grid {

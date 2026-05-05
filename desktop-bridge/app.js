@@ -1861,38 +1861,22 @@ const showFramePreview = () => {
 };
 
 const showPassiveViteFrame = (url) => {
-  if (!url || state.browserDomActive) return;
+  if (!url) return;
   if (state.browserShotUrl) {
     URL.revokeObjectURL(state.browserShotUrl);
     state.browserShotUrl = "";
   }
+  state.browserDomActive = false;
   els.browserShot.hidden = true;
   els.browserFrame.hidden = false;
   els.browserFrame.removeAttribute("srcdoc");
   if (els.browserFrame.getAttribute("src") !== url) els.browserFrame.src = url;
 };
 
-const renderViteTargetChoices = (targets = [], selectedTarget = "") => {
+const renderViteTargetChoices = () => {
   if (!els.browserCandidates) return;
-  const choices = targets.filter((target) => target?.url && target.url !== selectedTarget).slice(0, 4);
-  if (!choices.length) {
-    els.browserCandidates.hidden = true;
-    els.browserCandidates.innerHTML = "";
-    return;
-  }
-  els.browserCandidates.hidden = false;
-  els.browserCandidates.innerHTML = `
-    <span>Live screens</span>
-    ${choices
-      .map(
-        (target) => `
-          <button type="button" data-vite-url="${escapeHtml(target.url)}">
-            ${escapeHtml(target.title || target.url.replace(/^https?:\/\//, ""))}
-          </button>
-        `
-      )
-      .join("")}
-  `;
+  els.browserCandidates.hidden = true;
+  els.browserCandidates.innerHTML = "";
 };
 
 const setBrowserLiveStatus = (payload = {}) => {
@@ -1932,6 +1916,7 @@ const setBrowserLiveStatus = (payload = {}) => {
       els.browserLiveStatus.textContent = "No reachable Vite browser for the selected chat";
     }
   } else if (active && activeUrl) {
+    showPassiveViteFrame(activeUrl);
     els.browserLiveStatus.textContent =
       selectedTarget && activeUrl !== selectedTarget
         ? `Live · ${activeUrl}${title} · selected chat target ${selectedTarget}`
@@ -2041,9 +2026,7 @@ const stopLiveBrowserPolling = () => {
 
 const startLiveBrowserPolling = () => {
   stopLiveBrowserPolling();
-  fetchLiveBrowserFrame();
   loadBrowserStatus();
-  state.browserLiveTimer = setInterval(fetchLiveBrowserFrame, 900);
   state.browserStatusTimer = setInterval(loadBrowserStatus, 2200);
 };
 
