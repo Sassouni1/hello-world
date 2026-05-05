@@ -44,7 +44,7 @@ const OBSERVED_PENDING_USER_MS = 10 * 60_000;
 const ACTIVE_MTIME_FALLBACK_MS = 8_000;
 const CHAT_LIST_CACHE_MS = 1500;
 const CHAT_DETAIL_TAIL_BYTES = Number(process.env.CHAT_DETAIL_TAIL_BYTES || 4 * 1024 * 1024);
-const CLOUD_POLL_MS = Number(process.env.VLIX_CLOUD_POLL_MS || 2200);
+const CLOUD_POLL_MS = Number(process.env.VLIX_CLOUD_POLL_MS || 1200);
 const CLOUD_SESSION_SYNC_MS = Number(process.env.VLIX_CLOUD_SESSION_SYNC_MS || 15_000);
 const normalizePublicAppUrl = (value) => {
   const raw = String(value || "").trim() || "https://vlix1.lovable.app";
@@ -74,6 +74,7 @@ let cloudSyncState = {
 };
 let cloudSyncTimer = null;
 let cloudSessionSyncAt = 0;
+let cloudViteFrameSyncAt = 0;
 const viteBrowser = {
   browser: null,
   page: null,
@@ -461,6 +462,7 @@ const LOCAL_CLOUD_API_PATHS = new Set([
   "/api/vite-browser/start",
   "/api/vite-browser/screenshot",
   "/api/vite-browser/reload",
+  "/api/vite-browser/input",
   "/api/vite-browser/stop",
 ]);
 
@@ -3119,6 +3121,17 @@ const decodeBridgeSetup = (raw) => {
 
 const cloudConfigValue = (value) => String(value || "").trim();
 
+const cloudUserIdFromAccessToken = (token) => {
+  try {
+    const [, payload] = String(token || "").split(".");
+    if (!payload) return "";
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    return cloudConfigValue(parsed?.sub);
+  } catch {
+    return "";
+  }
+};
+
 const mergeCloudConfig = (...sources) => {
   const config = {};
   for (const source of sources) {
@@ -3129,11 +3142,13 @@ const mergeCloudConfig = (...sources) => {
       "accessToken",
       "refreshToken",
       "accountId",
+      "userId",
     ]) {
       const value = cloudConfigValue(source[key]);
       if (value) config[key] = value;
     }
   }
+  if (!config.userId) config.userId = cloudUserIdFromAccessToken(config.accessToken);
   return config;
 };
 
@@ -3171,6 +3186,7 @@ const cloudConfig = () => {
     accessToken: process.env.VLIX_SUPABASE_ACCESS_TOKEN,
     refreshToken: process.env.VLIX_SUPABASE_REFRESH_TOKEN,
     accountId: process.env.VLIX_ACCOUNT_ID,
+    userId: process.env.VLIX_USER_ID,
   };
   const config = mergeCloudConfig(setup ? null : saved, setup, envConfig);
   if (!hasCompleteCloudConfig(config)) return null;
@@ -3419,6 +3435,55 @@ const storageObjectUrl = (config, bucket, objectPath) =>
     `/storage/v1/object/${encodeURIComponent(bucket)}/${String(objectPath).split("/").map(encodeURIComponent).join("/")}`,
   );
 
+const cloudStorageUpload = async (config, bucket, objectPath, buffer, contentType) => {
+  const response = await fetch(storageObjectUrl(config, bucket, objectPath), {
+    method: "POST",
+    headers: {
+      apikey: config.supabaseAnonKey,
+      Authorization: `Bearer ${config.accessToken}`,
+      "Content-Type": contentType,
+      "x-upsert": "true",
+    },
+    body: buffer,
+  });
+  if (!response.ok) {
+    if (response.status === 401 && (await refreshCloudSession(config))) {
+      return cloudStorageUpload(config, bucket, objectPath, buffer, contentType);
+    }
+    const text = await response.text();
+    const payload = parseCloudPayload(text);
+    throw new Error(
+      `Cloud storage ${response.status}: ${payload?.message || payload?.error || response.statusText}`,
+    );
+  }
+  return response;
+};
+
+const cloudViteFramePath = (config) => {
+  const userSegment = config.userId || "desktop";
+  return `${userSegment}/${config.accountId}/vite-browser/latest.jpg`;
+};
+
+const uploadLatestViteFrameToCloud = async (config) => {
+  if (!viteBrowser.page) return null;
+  const image = await viteBrowser.page.screenshot({
+    type: "jpeg",
+    quality: 58,
+    fullPage: false,
+  });
+  viteBrowser.lastFrameAt = new Date().toISOString();
+  const pathName = cloudViteFramePath(config);
+  await cloudStorageUpload(config, "bridge-attachments", pathName, image, "image/jpeg");
+  cloudViteFrameSyncAt = Date.now();
+  return {
+    bucket: "bridge-attachments",
+    path: pathName,
+    type: "image/jpeg",
+    size: image.length,
+    updatedAt: viteBrowser.lastFrameAt,
+  };
+};
+
 const downloadCloudAttachments = async (config, attachments = []) => {
   const result = [];
   for (const attachment of Array.isArray(attachments) ? attachments.slice(0, 6) : []) {
@@ -3509,7 +3574,39 @@ const completeCloudStopCommand = async (config, command, sessionRow) => {
   });
 };
 
+const completeCloudBrowserCommand = async (config, command) => {
+  const body =
+    typeof command.body === "string" && command.body.trim()
+      ? JSON.parse(command.body)
+      : {};
+  const action = String(body.action || body.type || "start");
+  if (action === "start") {
+    await ensureViteBrowser(body.url || (await detectViteUrl()) || "http://localhost:5173");
+  } else if (action === "reload") {
+    if (body.url || !viteBrowser.page) {
+      await ensureViteBrowser(body.url || viteBrowser.url || (await detectViteUrl()) || "http://localhost:5173");
+    } else {
+      await viteBrowser.page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 });
+      rememberViteBrowserLog({ type: "browser", level: "info", text: "Reloaded Vite browser from phone" });
+    }
+  } else if (action === "stop") {
+    await closeViteBrowser();
+  } else if (["click", "scroll", "type", "press"].includes(action)) {
+    await applyViteBrowserInput({ ...body, type: action });
+  } else {
+    throw new Error(`Unsupported browser action: ${action}`);
+  }
+  const frame = viteBrowser.page ? await uploadLatestViteFrameToCloud(config) : null;
+  await cloudUpdateCommand(config, command.id, {
+    status: "completed",
+    completed_at: new Date().toISOString(),
+    error: null,
+  });
+  return frame;
+};
+
 const processCloudCommand = async (config, command) => {
+  if (command.kind === "browser") return completeCloudBrowserCommand(config, command);
   const sessionRow = command.session_id
     ? await cloudSelectSingle(
         config,
@@ -3562,6 +3659,13 @@ const pollCloudCommands = async (config) => {
         error: error.message || "Cloud command failed.",
         completed_at: new Date().toISOString(),
       });
+    }
+  }
+  if (viteBrowser.page && Date.now() - cloudViteFrameSyncAt > 1000) {
+    try {
+      await uploadLatestViteFrameToCloud(config);
+    } catch (error) {
+      console.warn(`Vlix cloud Vite frame sync skipped: ${error.message}`);
     }
   }
 };
@@ -3726,6 +3830,47 @@ const ensureViteBrowser = async (target) => {
   return viteBrowserStatus();
 };
 
+const requireVitePage = () => {
+  if (!viteBrowser.page) throw new Error("Start the Vite browser first.");
+  return viteBrowser.page;
+};
+
+const applyViteBrowserInput = async (input = {}) => {
+  const page = requireVitePage();
+  const type = String(input.type || "").trim();
+  const viewport = page.viewportSize() || { width: 1280, height: 820 };
+  if (type === "click") {
+    const xRatio = Math.max(0, Math.min(1, Number(input.xRatio)));
+    const yRatio = Math.max(0, Math.min(1, Number(input.yRatio)));
+    const x = Math.round(xRatio * viewport.width);
+    const y = Math.round(yRatio * viewport.height);
+    await page.mouse.click(x, y, {
+      button: input.button === "right" ? "right" : "left",
+      clickCount: Number(input.clickCount) || 1,
+    });
+    rememberViteBrowserLog({ type: "input", level: "info", text: `Clicked ${x}, ${y}` });
+  } else if (type === "scroll") {
+    await page.mouse.wheel(Number(input.deltaX) || 0, Number(input.deltaY) || 0);
+    rememberViteBrowserLog({
+      type: "input",
+      level: "info",
+      text: `Scrolled ${Number(input.deltaX) || 0}, ${Number(input.deltaY) || 0}`,
+    });
+  } else if (type === "type") {
+    const text = String(input.text || "");
+    if (text) await page.keyboard.type(text, { delay: 8 });
+    rememberViteBrowserLog({ type: "input", level: "info", text: `Typed ${text.length} chars` });
+  } else if (type === "press") {
+    const key = String(input.key || "").trim();
+    if (!key) throw new Error("Provide a key to press.");
+    await page.keyboard.press(key);
+    rememberViteBrowserLog({ type: "input", level: "info", text: `Pressed ${key}` });
+  } else {
+    throw new Error("Unsupported Vite browser input.");
+  }
+  return viteBrowserStatus();
+};
+
 const handleViteBrowserApi = async (req, res, reqUrl) => {
   if (!isLoopbackRequest(req)) {
     sendLocalApi(req, res, 403, {
@@ -3772,6 +3917,16 @@ const handleViteBrowserApi = async (req, res, reqUrl) => {
     await viteBrowser.page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 });
     rememberViteBrowserLog({ type: "browser", level: "info", text: "Reloaded Vite browser" });
     sendLocalApi(req, res, 200, await viteBrowserStatus());
+    return true;
+  }
+
+  if (req.method === "POST" && reqUrl.pathname === "/api/vite-browser/input") {
+    const body = await readBody(req);
+    try {
+      sendLocalApi(req, res, 200, await applyViteBrowserInput(body));
+    } catch (error) {
+      sendLocalApi(req, res, 409, { error: error.message || "Input failed." });
+    }
     return true;
   }
 

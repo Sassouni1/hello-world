@@ -87,6 +87,12 @@
           <em id="automationNavCount">0</em>
         </button>
 
+        <button class="nav-row" id="browserNavBtn" type="button">
+          <span>▣</span>
+          <strong>Vite browser</strong>
+          <em>Live</em>
+        </button>
+
         <section class="metric-strip" aria-label="Session stats">
           <span><strong id="chatCount">0</strong> chats</span>
           <span><strong id="browserCount">0</strong> browsers</span>
@@ -226,6 +232,12 @@
           <div class="preview-frame">
             <iframe id="browserFrame" title="Browser preview"></iframe>
             <img id="browserShot" alt="Browser screenshot preview" hidden />
+          </div>
+
+          <div class="browser-remote-input">
+            <input id="browserTextInput" type="text" placeholder="Type into Vite..." autocomplete="off" />
+            <button id="browserTypeBtn" class="secondary-btn" type="button">Type</button>
+            <button id="browserEnterBtn" class="secondary-btn" type="button">Enter</button>
           </div>
 
           <div class="browser-console" id="browserConsole">No browser logs yet.</div>

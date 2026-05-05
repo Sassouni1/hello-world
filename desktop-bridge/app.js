@@ -111,12 +111,16 @@ const els = {
   previewBtn: document.getElementById("previewBtn"),
   openBrowserBtn: document.getElementById("openBrowserBtn"),
   browserViewBtn: document.getElementById("browserViewBtn"),
+  browserNavBtn: document.getElementById("browserNavBtn"),
   shotBtn: document.getElementById("shotBtn"),
   mobilePreviewInlineBtn: document.getElementById("mobilePreviewInlineBtn"),
   browserFrame: document.getElementById("browserFrame"),
   browserShot: document.getElementById("browserShot"),
   browserLiveStatus: document.getElementById("browserLiveStatus"),
   browserConsole: document.getElementById("browserConsole"),
+  browserTextInput: document.getElementById("browserTextInput"),
+  browserTypeBtn: document.getElementById("browserTypeBtn"),
+  browserEnterBtn: document.getElementById("browserEnterBtn"),
   viteStopBtn: document.getElementById("viteStopBtn"),
   browserSessions: document.getElementById("browserSessions"),
   automationList: document.getElementById("automationList"),
@@ -1881,6 +1885,17 @@ const fetchLiveBrowserFrame = async () => {
   }
 };
 
+const sendViteBrowserInput = async (payload) => {
+  const response = await api("/api/vite-browser/input", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  setBrowserLiveStatus(response);
+  fetchLiveBrowserFrame();
+  return response;
+};
+
 const stopLiveBrowserPolling = () => {
   clearInterval(state.browserLiveTimer);
   clearInterval(state.browserStatusTimer);
@@ -1966,6 +1981,58 @@ const stopViteBrowser = async () => {
 const openBrowserPanel = () => {
   document.body.classList.add("is-browser-view");
   loadBrowserStatus();
+};
+
+const browserShotPoint = (event) => {
+  const rect = els.browserShot.getBoundingClientRect();
+  const naturalRatio = 1280 / 820;
+  const displayedRatio = rect.width / rect.height;
+  let imageWidth = rect.width;
+  let imageHeight = rect.height;
+  let offsetX = 0;
+  let offsetY = 0;
+  if (displayedRatio > naturalRatio) {
+    imageWidth = rect.height * naturalRatio;
+    offsetX = (rect.width - imageWidth) / 2;
+  } else {
+    imageHeight = rect.width / naturalRatio;
+    offsetY = (rect.height - imageHeight) / 2;
+  }
+  const x = Math.max(0, Math.min(imageWidth, event.clientX - rect.left - offsetX));
+  const y = Math.max(0, Math.min(imageHeight, event.clientY - rect.top - offsetY));
+  return {
+    xRatio: imageWidth ? x / imageWidth : 0,
+    yRatio: imageHeight ? y / imageHeight : 0,
+  };
+};
+
+const clickVitePreview = (event) => {
+  if (els.browserShot.hidden) return;
+  sendViteBrowserInput({ type: "click", ...browserShotPoint(event) }).catch((error) => alert(error.message));
+};
+
+const scrollVitePreview = (event) => {
+  if (els.browserShot.hidden) return;
+  event.preventDefault();
+  sendViteBrowserInput({
+    type: "scroll",
+    deltaX: event.deltaX,
+    deltaY: event.deltaY,
+  }).catch((error) => console.warn(error.message));
+};
+
+const typeIntoVitePreview = () => {
+  const text = els.browserTextInput.value;
+  if (!text) return;
+  sendViteBrowserInput({ type: "type", text })
+    .then(() => {
+      els.browserTextInput.value = "";
+    })
+    .catch((error) => alert(error.message));
+};
+
+const pressViteEnter = () => {
+  sendViteBrowserInput({ type: "press", key: "Enter" }).catch((error) => alert(error.message));
 };
 
 const setMobilePreviewSize = (size) => {
@@ -2286,6 +2353,20 @@ els.shotBtn.addEventListener("click", () => captureScreenshot());
 els.openBrowserBtn.addEventListener("click", openVisibleBrowser);
 els.viteStopBtn.addEventListener("click", stopViteBrowser);
 els.browserViewBtn.addEventListener("click", openBrowserPanel);
+els.browserNavBtn.addEventListener("click", () => {
+  closeMobileDrawer();
+  openBrowserPanel();
+});
+els.browserShot.addEventListener("click", clickVitePreview);
+els.browserShot.addEventListener("wheel", scrollVitePreview, { passive: false });
+els.browserTypeBtn.addEventListener("click", typeIntoVitePreview);
+els.browserEnterBtn.addEventListener("click", pressViteEnter);
+els.browserTextInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    typeIntoVitePreview();
+  }
+});
 els.mobilePreviewBtn.addEventListener("click", openMobilePreview);
 els.mobilePreviewInlineBtn.addEventListener("click", openMobilePreview);
 els.mobilePreviewClose.addEventListener("click", closeMobilePreview);

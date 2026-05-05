@@ -22,7 +22,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database, Json } from "@/integrations/supabase/types";
@@ -76,8 +76,8 @@ const initialDesktopSetup =
   })();
 const canProbeLocalBridge =
   typeof window !== "undefined" &&
-  window.location.protocol === "http:" &&
-  ["localhost", "127.0.0.1"].includes(window.location.hostname);
+  (["localhost", "127.0.0.1"].includes(window.location.hostname) ||
+    window.location.protocol === "https:");
 
 async function sha256Hex(value: string) {
   const bytes = new TextEncoder().encode(value);
@@ -113,8 +113,13 @@ function Index() {
   const [syncingComputer, setSyncingComputer] = useState(false);
   const [pairingUrl, setPairingUrl] = useState("");
   const [pairingQr, setPairingQr] = useState("");
+  const [viteFrameUrl, setViteFrameUrl] = useState("");
+  const [viteFrameAt, setViteFrameAt] = useState("");
+  const [viteText, setViteText] = useState("");
+  const [viteBusy, setViteBusy] = useState(false);
   const autoStartedFromBridgeRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const viteFrameRef = useRef<HTMLImageElement | null>(null);
 
   const activeAccount = accounts.find((account) => account.id === activeAccountId) || null;
   const selectedSession = sessions.find((item) => item.id === selectedSessionId) || null;
@@ -305,10 +310,11 @@ function Index() {
       supabaseUrl,
       supabaseAnonKey,
       accountId: activeAccount.id,
+      userId: user?.id,
       accessToken: session.access_token,
       refreshToken: session.refresh_token,
     };
-  }, [activeAccount, session]);
+  }, [activeAccount, session, user?.id]);
   const cloudConnectCommand = setupPayload
     ? `VLIX_BRIDGE_SETUP='${setupPayload}' ${installCommand}`
     : "";
@@ -611,6 +617,85 @@ function Index() {
     else setNotice("Stop command queued.");
   };
 
+  const viteFramePath = user && activeAccount ? `${user.id}/${activeAccount.id}/vite-browser/latest.jpg` : "";
+
+  const loadViteFrame = async () => {
+    if (!viteFramePath) return;
+    const { data, error } = await supabase.storage
+      .from("bridge-attachments")
+      .createSignedUrl(viteFramePath, 90);
+    if (error || !data?.signedUrl) return;
+    setViteFrameUrl(`${data.signedUrl}${data.signedUrl.includes("?") ? "&" : "?"}t=${Date.now()}`);
+    setViteFrameAt(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }));
+  };
+
+  useEffect(() => {
+    setViteFrameUrl("");
+    setViteFrameAt("");
+    if (!viteFramePath) return;
+    void loadViteFrame();
+    const timer = window.setInterval(() => void loadViteFrame(), 1200);
+    return () => window.clearInterval(timer);
+    // loadViteFrame is intentionally recreated with the active private storage path.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viteFramePath]);
+
+  const queueBrowserCommand = async (payload: Record<string, unknown>) => {
+    if (!user || !activeAccount) {
+      setNotice("Start the web console first.");
+      return;
+    }
+    setViteBusy(true);
+    try {
+      const { error } = await supabase.from("bridge_commands").insert({
+        account_id: activeAccount.id,
+        session_id: null,
+        requested_by: user.id,
+        kind: "browser",
+        status: "queued",
+        body: JSON.stringify(payload),
+        attachments: [],
+      });
+      if (error) throw error;
+      setNotice("Vite browser command queued to your desktop.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Vite browser command failed.");
+    } finally {
+      setViteBusy(false);
+    }
+  };
+
+  const viteFramePoint = (event: MouseEvent<HTMLImageElement>) => {
+    const image = viteFrameRef.current;
+    if (!image) return { xRatio: 0.5, yRatio: 0.5 };
+    const rect = image.getBoundingClientRect();
+    const naturalRatio = 1280 / 820;
+    const displayedRatio = rect.width / rect.height;
+    let imageWidth = rect.width;
+    let imageHeight = rect.height;
+    let offsetX = 0;
+    let offsetY = 0;
+    if (displayedRatio > naturalRatio) {
+      imageWidth = rect.height * naturalRatio;
+      offsetX = (rect.width - imageWidth) / 2;
+    } else {
+      imageHeight = rect.width / naturalRatio;
+      offsetY = (rect.height - imageHeight) / 2;
+    }
+    const x = Math.max(0, Math.min(imageWidth, event.clientX - rect.left - offsetX));
+    const y = Math.max(0, Math.min(imageHeight, event.clientY - rect.top - offsetY));
+    return {
+      xRatio: imageWidth ? x / imageWidth : 0.5,
+      yRatio: imageHeight ? y / imageHeight : 0.5,
+    };
+  };
+
+  const typeIntoVite = async () => {
+    if (!viteText.trim()) return;
+    await queueBrowserCommand({ action: "type", text: viteText });
+    setViteText("");
+  };
+
   return (
     <main className="min-h-screen overflow-hidden bg-[#0f0f0f] text-[#f5f5f1]">
       <header className="flex items-center justify-between border-b border-white/10 px-5 py-4 sm:px-8">
@@ -869,6 +954,98 @@ function Index() {
                 {!devices.length && (
                   <p className="text-sm text-white/45">No desktop bridge has checked in yet.</p>
                 )}
+              </div>
+            </Panel>
+
+            <Panel title="Vite browser">
+              <div className="space-y-3">
+                <p className="text-sm leading-6 text-white/50">
+                  See the desktop-managed Vite window from this website. Tap the frame to click,
+                  scroll it, or type into the app from your phone.
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  <Button
+                    className="rounded-2xl bg-sky-400 text-black hover:bg-sky-300"
+                    disabled={viteBusy || !activeAccount}
+                    onClick={() => queueBrowserCommand({ action: "start" })}
+                  >
+                    {viteBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Show
+                  </Button>
+                  <Button
+                    className="rounded-2xl bg-white/[0.08] text-white hover:bg-white/[0.12]"
+                    disabled={viteBusy || !activeAccount}
+                    onClick={() => queueBrowserCommand({ action: "reload" })}
+                  >
+                    Reload
+                  </Button>
+                  <Button
+                    className="rounded-2xl bg-white/[0.08] text-white hover:bg-white/[0.12]"
+                    disabled={viteBusy || !activeAccount}
+                    onClick={() => queueBrowserCommand({ action: "stop" })}
+                  >
+                    Stop
+                  </Button>
+                </div>
+                <div className="overflow-hidden rounded-2xl border border-white/10 bg-black">
+                  {viteFrameUrl ? (
+                    <img
+                      ref={viteFrameRef}
+                      alt="Live Vite browser from desktop"
+                      className="aspect-[1280/820] w-full select-none object-contain"
+                      draggable={false}
+                      src={viteFrameUrl}
+                      onClick={(event) =>
+                        queueBrowserCommand({ action: "click", ...viteFramePoint(event) })
+                      }
+                      onWheel={(event) => {
+                        event.preventDefault();
+                        void queueBrowserCommand({
+                          action: "scroll",
+                          deltaX: event.deltaX,
+                          deltaY: event.deltaY,
+                        });
+                      }}
+                    />
+                  ) : (
+                    <div className="flex aspect-[1280/820] items-center justify-center px-4 text-center text-sm text-white/42">
+                      Click Show after your desktop bridge is synced. The phone will load the latest
+                      Vite frame here.
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center justify-between text-xs text-white/38">
+                  <span>{viteFrameAt ? `Latest frame ${viteFrameAt}` : "Waiting for a desktop frame"}</span>
+                  <span>relay, not localhost</span>
+                </div>
+                <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-2">
+                  <input
+                    className="min-w-0 rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-3 text-sm text-white outline-none placeholder:text-white/35"
+                    placeholder="Type into Vite..."
+                    value={viteText}
+                    onChange={(event) => setViteText(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void typeIntoVite();
+                      }
+                    }}
+                  />
+                  <Button
+                    className="rounded-2xl bg-white/[0.08] text-white hover:bg-white/[0.12]"
+                    disabled={viteBusy || !viteText.trim()}
+                    onClick={() => void typeIntoVite()}
+                  >
+                    Type
+                  </Button>
+                  <Button
+                    className="rounded-2xl bg-white/[0.08] text-white hover:bg-white/[0.12]"
+                    disabled={viteBusy}
+                    onClick={() => queueBrowserCommand({ action: "press", key: "Enter" })}
+                  >
+                    Enter
+                  </Button>
+                </div>
               </div>
             </Panel>
 

@@ -1653,15 +1653,44 @@ body.is-browser-view .browser-panel {
   overflow: hidden;
   border: 1px solid #383838;
   background: #181818;
+  touch-action: none;
+  cursor: crosshair;
 }
 
-.preview-frame iframe,
+.preview-frame iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
 .preview-frame img {
   width: 100%;
   height: 100%;
   border: 0;
-  object-fit: cover;
+  object-fit: contain;
   display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.browser-remote-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.browser-remote-input input {
+  min-width: 0;
+  height: 38px;
+  border: 1px solid #383838;
+  border-radius: 12px;
+  padding: 0 11px;
+  color: var(--ink);
+  background: #202020;
+  outline: none;
+  font-size: 13px;
 }
 
 .browser-console {
