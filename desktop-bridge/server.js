@@ -4010,6 +4010,63 @@ const detectViteUrl = async (sessionId = "") => {
   return "";
 };
 
+const decodeHtmlText = (value = "") =>
+  String(value)
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+
+const titleFromHtml = (html = "") => {
+  const match = String(html).match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  return match ? decodeHtmlText(match[1].replace(/\s+/g, " ").trim()) : "";
+};
+
+const liveViteTargets = async (sessionId = "") => {
+  const selected = sessionId ? await selectedChatViteTarget(sessionId) : null;
+  const candidates = [];
+  const seen = new Set();
+  const addCandidate = (url, source, score) => {
+    const clean = cleanDetectedUrl(url);
+    if (!clean || seen.has(clean)) return;
+    seen.add(clean);
+    candidates.push({ url: clean, source, score });
+  };
+
+  for (const candidate of selected?.candidates || []) addCandidate(candidate.url, candidate.source || "selected-chat", 120);
+  const recent = await recentCodexViteUrl();
+  if (recent) addCandidate(recent, "recent-codex-url", 90);
+
+  for (const session of listBrowserSessions()) {
+    for (const origin of session.allowedOrigins || []) addCandidate(origin, "browser-session-origin", 50);
+  }
+
+  const ports = [5173, 8081, 8082, 5174, 5175, 5176, 4173, 3000, 8080];
+  for (const port of ports) {
+    addCandidate(`http://127.0.0.1:${port}`, "live-port", 30);
+    addCandidate(`http://localhost:${port}`, "live-port", 25);
+  }
+
+  const live = [];
+  for (const candidate of candidates) {
+    if (!(await isReachableViteUrl(candidate.url))) continue;
+    const page = await fetchTextWithTimeout(candidate.url, 500);
+    const title = page.ok ? titleFromHtml(page.body) : "";
+    let score = candidate.score;
+    if (/vlix|command local ai/i.test(title)) score += 45;
+    if (/lovable app/i.test(title)) score -= 25;
+    live.push({
+      ...candidate,
+      score,
+      title,
+    });
+  }
+
+  live.sort((a, b) => b.score - a.score);
+  return live.slice(0, 12);
+};
+
 const viteBrowserStatus = async (sessionId = "") => {
   let title = "";
   if (viteBrowser.page) {
@@ -4028,6 +4085,7 @@ const viteBrowserStatus = async (sessionId = "") => {
     headless: viteBrowser.headless,
     detectedUrl: await detectViteUrl(sessionId),
     selectedBrowser: sessionId ? await selectedChatViteTarget(sessionId) : null,
+    availableViteTargets: await liveViteTargets(sessionId),
     logs: viteBrowser.logs.slice(-16),
   };
 };
@@ -4283,7 +4341,7 @@ const handleViteBrowserApi = async (req, res, reqUrl) => {
   if (req.method === "POST" && reqUrl.pathname === "/api/vite-browser/start") {
     const body = await readBody(req);
     const chatId = body.chatId || "";
-    const target = body.url || (await detectViteUrl(chatId));
+    const target = body.url || (await detectViteUrl(chatId)) || (await liveViteTargets(chatId))[0]?.url;
     if (!target) {
       sendLocalApi(req, res, 409, {
         error: chatId
@@ -4301,7 +4359,7 @@ const handleViteBrowserApi = async (req, res, reqUrl) => {
     const body = await readBody(req);
     const chatId = body.chatId || "";
     if (!viteBrowser.page) {
-      const target = body.url || (await detectViteUrl(chatId));
+      const target = body.url || (await detectViteUrl(chatId)) || (await liveViteTargets(chatId))[0]?.url;
       if (!target) {
         sendLocalApi(req, res, 409, {
           error: chatId
