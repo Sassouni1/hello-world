@@ -1855,7 +1855,7 @@ const showFramePreview = () => {
   els.browserFrame.hidden = false;
   els.browserFrame.removeAttribute("srcdoc");
   els.browserFrame.src = url;
-  els.browserLiveStatus.textContent = `Local Vite iframe · ${url}`;
+  els.browserLiveStatus.textContent = `URL preview · separate browser context · ${url}`;
   els.browserLiveStatus.classList.add("is-live");
   return url;
 };
@@ -1899,10 +1899,19 @@ const setBrowserLiveStatus = (payload = {}) => {
     state.browserUrlAuto = inputTarget;
     state.browserUrlManual = false;
   }
-  if (payload.selectedBrowser && !selectedTarget) {
+  if (selectedTarget) {
+    showPassiveViteFrame(selectedTarget);
+    if (active && activeUrl && activeUrl !== selectedTarget) {
+      els.browserLiveStatus.textContent = `URL preview only · separate browser context · ${selectedTarget}`;
+    } else if (active && activeUrl) {
+      els.browserLiveStatus.textContent = `Bridge browser preview · separate browser context · ${activeUrl}${title}`;
+    } else {
+      els.browserLiveStatus.textContent = `URL preview only · separate browser context · ${selectedTarget}`;
+    }
+  } else if (payload.selectedBrowser && !selectedTarget) {
     if (fallbackTarget) {
       showPassiveViteFrame(activeUrl || fallbackTarget);
-      els.browserLiveStatus.textContent = `No linked Vite for this chat · showing live screen ${activeUrl || fallbackTarget}`;
+      els.browserLiveStatus.textContent = `No URL from this chat · previewing ${activeUrl || fallbackTarget}`;
     } else {
       if (!state.browserUrlManual) {
         els.browserUrl.value = "";
@@ -1917,12 +1926,7 @@ const setBrowserLiveStatus = (payload = {}) => {
     }
   } else if (active && activeUrl) {
     showPassiveViteFrame(activeUrl);
-    els.browserLiveStatus.textContent =
-      selectedTarget && activeUrl !== selectedTarget
-        ? `Live · ${activeUrl}${title} · selected chat target ${selectedTarget}`
-        : `Live · ${activeUrl}${title}`;
-  } else if (selectedTarget) {
-    els.browserLiveStatus.textContent = `Selected chat Vite · ${selectedTarget}`;
+    els.browserLiveStatus.textContent = `Bridge browser preview · ${activeUrl}${title}`;
   } else {
     els.browserLiveStatus.textContent = "Idle";
   }

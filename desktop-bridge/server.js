@@ -4034,7 +4034,9 @@ const liveViteTargets = async (sessionId = "") => {
     candidates.push({ url: clean, source, score });
   };
 
-  for (const candidate of selected?.candidates || []) addCandidate(candidate.url, candidate.source || "selected-chat", 120);
+  for (const candidate of selected?.candidates || []) {
+    addCandidate(candidate.url, candidate.source || "selected-chat", candidate.score || 120);
+  }
   const recent = await recentCodexViteUrl();
   if (recent) addCandidate(recent, "recent-codex-url", 90);
 
