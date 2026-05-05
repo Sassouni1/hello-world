@@ -1,4 +1,5 @@
 const http = require("http");
+const https = require("https");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
@@ -73,6 +74,67 @@ let cloudSyncState = {
 };
 let cloudSyncTimer = null;
 let cloudSessionSyncAt = 0;
+const viteBrowser = {
+  browser: null,
+  page: null,
+  url: "",
+  startedAt: null,
+  lastFrameAt: null,
+  headless: false,
+  logs: [],
+};
+
+const rememberViteBrowserLog = (entry = {}) => {
+  viteBrowser.logs.push({
+    at: new Date().toISOString(),
+    type: entry.type || "log",
+    level: entry.level || entry.type || "log",
+    text: compact(String(entry.text || entry.message || entry.url || ""), 260),
+    url: entry.url || "",
+  });
+  if (viteBrowser.logs.length > 80) viteBrowser.logs.splice(0, viteBrowser.logs.length - 80);
+};
+
+const attachViteBrowserPageEvents = (page) => {
+  page.on("console", (message) => {
+    rememberViteBrowserLog({ type: "console", level: message.type(), text: message.text() });
+  });
+  page.on("pageerror", (error) => {
+    rememberViteBrowserLog({ type: "pageerror", level: "error", text: error.message });
+  });
+  page.on("requestfailed", (request) => {
+    rememberViteBrowserLog({
+      type: "network",
+      level: "error",
+      text: `${request.method()} ${request.url()} failed: ${request.failure()?.errorText || "request failed"}`,
+      url: request.url(),
+    });
+  });
+  page.on("response", (response) => {
+    if (response.status() >= 400) {
+      rememberViteBrowserLog({
+        type: "network",
+        level: "warn",
+        text: `${response.status()} ${response.url()}`,
+        url: response.url(),
+      });
+    }
+  });
+};
+
+const closeViteBrowser = async () => {
+  const browser = viteBrowser.browser;
+  viteBrowser.browser = null;
+  viteBrowser.page = null;
+  viteBrowser.url = "";
+  viteBrowser.startedAt = null;
+  viteBrowser.lastFrameAt = null;
+  if (browser) {
+    try {
+      await browser.close();
+    } catch {}
+  }
+};
 
 const appAssetVersion = () => {
   const source = APP_ASSET_FILES.map((file) => {
@@ -395,6 +457,11 @@ const LOCAL_CLOUD_API_PATHS = new Set([
   "/api/cloud/status",
   "/api/cloud/connect",
   "/api/pairing/start",
+  "/api/vite-browser/status",
+  "/api/vite-browser/start",
+  "/api/vite-browser/screenshot",
+  "/api/vite-browser/reload",
+  "/api/vite-browser/stop",
 ]);
 
 const allowedLocalApiOrigins = () =>
@@ -3537,6 +3604,211 @@ const startCloudSync = () => {
   cloudSyncTimer = setInterval(tick, CLOUD_POLL_MS);
 };
 
+const normalizeBrowserTarget = (value) => {
+  const raw = String(value || "").trim() || "http://localhost:5173";
+  const withProtocol = /^https?:\/\//i.test(raw)
+    ? raw
+    : /^(localhost|127\.|0\.0\.0\.0|\[::1\]|[a-z0-9.-]+:\d+)/i.test(raw)
+      ? `http://${raw}`
+      : `https://${raw}`;
+  const parsed = new URL(withProtocol);
+  if (!/^https?:$/i.test(parsed.protocol)) throw new Error("Provide an http(s) URL.");
+  return parsed.toString();
+};
+
+const fetchTextWithTimeout = (target, timeoutMs = 650) =>
+  new Promise((resolve) => {
+    let settled = false;
+    const parsed = new URL(target);
+    const client = parsed.protocol === "https:" ? https : http;
+    const req = client.get(
+      {
+        hostname: parsed.hostname,
+        port: parsed.port || (parsed.protocol === "https:" ? 443 : 80),
+        path: `${parsed.pathname}${parsed.search}`,
+        timeout: timeoutMs,
+      },
+      (response) => {
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          body += chunk;
+          if (body.length > 32_000) req.destroy();
+          if (!settled && body.length > 8_000) {
+            settled = true;
+            resolve({
+              ok: response.statusCode >= 200 && response.statusCode < 400,
+              status: response.statusCode,
+              body,
+            });
+            req.destroy();
+          }
+        });
+        response.on("end", () => {
+          if (!settled) {
+            settled = true;
+            resolve({
+              ok: response.statusCode >= 200 && response.statusCode < 400,
+              status: response.statusCode,
+              body,
+            });
+          }
+        });
+      },
+    );
+    req.on("timeout", () => req.destroy());
+    req.on("error", () => {
+      if (!settled) {
+        settled = true;
+        resolve({ ok: false, status: 0, body: "" });
+      }
+    });
+  });
+
+const detectViteUrl = async () => {
+  const ports = [5173, 5174, 5175, 5176, 4173, 3000, 8080];
+  for (const port of ports) {
+    const candidate = `http://localhost:${port}`;
+    const probe = await fetchTextWithTimeout(`${candidate}/@vite/client`);
+    if (probe.ok && /vite/i.test(probe.body)) return candidate;
+  }
+  return "";
+};
+
+const viteBrowserStatus = async () => {
+  let title = "";
+  if (viteBrowser.page) {
+    try {
+      title = await viteBrowser.page.title();
+    } catch {}
+  }
+  return {
+    ok: true,
+    active: Boolean(viteBrowser.browser && viteBrowser.page),
+    url: viteBrowser.url,
+    title,
+    startedAt: viteBrowser.startedAt,
+    lastFrameAt: viteBrowser.lastFrameAt,
+    headless: viteBrowser.headless,
+    detectedUrl: await detectViteUrl(),
+    logs: viteBrowser.logs.slice(-16),
+  };
+};
+
+const ensureViteBrowser = async (target) => {
+  const url = normalizeBrowserTarget(target);
+  const { chromium } = require("playwright");
+  if (!viteBrowser.browser) {
+    try {
+      viteBrowser.browser = await chromium.launch({
+        headless: false,
+        args: ["--window-size=1280,820"],
+      });
+      viteBrowser.headless = false;
+    } catch (error) {
+      viteBrowser.browser = await chromium.launch({ headless: true });
+      viteBrowser.headless = true;
+      rememberViteBrowserLog({
+        type: "browser",
+        level: "warn",
+        text: `Visible browser unavailable, using headless preview: ${error.message}`,
+      });
+    }
+    viteBrowser.startedAt = new Date().toISOString();
+  }
+  if (!viteBrowser.page || viteBrowser.page.isClosed()) {
+    viteBrowser.page = await viteBrowser.browser.newPage({ viewport: { width: 1280, height: 820 } });
+    attachViteBrowserPageEvents(viteBrowser.page);
+  }
+  await viteBrowser.page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 });
+  viteBrowser.url = url;
+  rememberViteBrowserLog({ type: "browser", level: "info", text: `Opened ${url}` });
+  return viteBrowserStatus();
+};
+
+const handleViteBrowserApi = async (req, res, reqUrl) => {
+  if (!isLoopbackRequest(req)) {
+    sendLocalApi(req, res, 403, {
+      error: "Vite browser control is only available on this computer.",
+    });
+    return true;
+  }
+  if (req.headers.origin && !localApiCorsHeaders(req)) {
+    send(res, 403, { error: "Origin is not allowed for local browser control." });
+    return true;
+  }
+
+  if (req.method === "GET" && reqUrl.pathname === "/api/vite-browser/status") {
+    sendLocalApi(req, res, 200, await viteBrowserStatus());
+    return true;
+  }
+
+  if (req.method === "POST" && reqUrl.pathname === "/api/vite-browser/start") {
+    const body = await readBody(req);
+    sendLocalApi(
+      req,
+      res,
+      200,
+      await ensureViteBrowser(body.url || (await detectViteUrl()) || "http://localhost:5173"),
+    );
+    return true;
+  }
+
+  if (req.method === "POST" && reqUrl.pathname === "/api/vite-browser/reload") {
+    const body = await readBody(req);
+    if (!viteBrowser.page) {
+      sendLocalApi(
+        req,
+        res,
+        200,
+        await ensureViteBrowser(body.url || (await detectViteUrl()) || "http://localhost:5173"),
+      );
+      return true;
+    }
+    if (body.url) {
+      sendLocalApi(req, res, 200, await ensureViteBrowser(body.url));
+      return true;
+    }
+    await viteBrowser.page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 });
+    rememberViteBrowserLog({ type: "browser", level: "info", text: "Reloaded Vite browser" });
+    sendLocalApi(req, res, 200, await viteBrowserStatus());
+    return true;
+  }
+
+  if (req.method === "POST" && reqUrl.pathname === "/api/vite-browser/stop") {
+    await closeViteBrowser();
+    sendLocalApi(req, res, 200, await viteBrowserStatus());
+    return true;
+  }
+
+  if (req.method === "GET" && reqUrl.pathname === "/api/vite-browser/screenshot") {
+    if (!viteBrowser.page) {
+      sendLocalApi(req, res, 409, { error: "Start the Vite browser first." });
+      return true;
+    }
+    try {
+      const image = await viteBrowser.page.screenshot({
+        type: "jpeg",
+        quality: 62,
+        fullPage: false,
+      });
+      viteBrowser.lastFrameAt = new Date().toISOString();
+      const corsHeaders = localApiCorsHeaders(req) || {};
+      res.writeHead(200, {
+        "Cache-Control": "no-store",
+        "Content-Type": "image/jpeg",
+        ...corsHeaders,
+      });
+      res.end(image);
+    } catch (error) {
+      sendLocalApi(req, res, 500, { error: error.message || "Screenshot failed." });
+    }
+    return true;
+  }
+
+  return false;
+};
+
 const handleScreenshot = async (req, res, reqUrl) => {
   const target = reqUrl.searchParams.get("url");
   if (!target || !/^https?:\/\//i.test(target)) {
@@ -3590,6 +3862,10 @@ const routeApi = async (req, res, reqUrl) => {
   if (req.method === "OPTIONS" && LOCAL_CLOUD_API_PATHS.has(reqUrl.pathname)) {
     sendLocalApiOptions(req, res);
     return true;
+  }
+
+  if (reqUrl.pathname.startsWith("/api/vite-browser/")) {
+    return handleViteBrowserApi(req, res, reqUrl);
   }
 
   if (req.method === "GET" && reqUrl.pathname === "/api/app-version") {

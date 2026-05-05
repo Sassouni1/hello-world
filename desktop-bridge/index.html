@@ -36,7 +36,7 @@
           <button type="button">Dashboard</button>
           <button type="button">Sessions</button>
           <button class="is-active" type="button">Messages</button>
-          <button type="button">Browser</button>
+          <button id="browserViewBtn" type="button">Browser</button>
           <button id="mobilePreviewBtn" type="button">Mobile</button>
           <button id="setupBridgeBtn" type="button">Bridge</button>
           <button type="button">Settings</button>
@@ -203,8 +203,8 @@
         <section class="panel-block">
           <header class="panel-heading">
             <div>
-              <p class="eyebrow">Browser</p>
-              <h2>Visibility</h2>
+            <p class="eyebrow">Browser</p>
+            <h2>Vite browser</h2>
             </div>
             <button class="icon-btn" id="shotBtn" title="Refresh screenshot" type="button">
               ⌁
@@ -212,19 +212,23 @@
           </header>
 
           <label class="url-row">
-            <span>Preview URL</span>
+            <span>Vite URL</span>
             <input id="browserUrl" type="url" />
           </label>
 
           <div class="browser-actions">
-            <button id="previewBtn" class="secondary-btn" type="button">Load screenshot</button>
-            <button id="openBrowserBtn" class="secondary-btn" type="button">Open visible</button>
+            <button id="previewBtn" class="secondary-btn" type="button">Start live</button>
+            <button id="openBrowserBtn" class="secondary-btn" type="button">Reload</button>
+            <button id="viteStopBtn" class="secondary-btn" type="button">Stop</button>
           </div>
+          <div class="browser-live-status" id="browserLiveStatus">Idle</div>
 
           <div class="preview-frame">
             <iframe id="browserFrame" title="Browser preview"></iframe>
             <img id="browserShot" alt="Browser screenshot preview" hidden />
           </div>
+
+          <div class="browser-console" id="browserConsole">No browser logs yet.</div>
         </section>
 
         <section class="panel-block">

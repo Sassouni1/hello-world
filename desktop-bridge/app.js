@@ -65,6 +65,9 @@ const state = {
   disconnected: false,
   integrationRequired: false,
   activeAccount: null,
+  browserLiveTimer: null,
+  browserStatusTimer: null,
+  browserShotUrl: "",
 };
 
 const els = {
@@ -107,10 +110,14 @@ const els = {
   browserUrl: document.getElementById("browserUrl"),
   previewBtn: document.getElementById("previewBtn"),
   openBrowserBtn: document.getElementById("openBrowserBtn"),
+  browserViewBtn: document.getElementById("browserViewBtn"),
   shotBtn: document.getElementById("shotBtn"),
   mobilePreviewInlineBtn: document.getElementById("mobilePreviewInlineBtn"),
   browserFrame: document.getElementById("browserFrame"),
   browserShot: document.getElementById("browserShot"),
+  browserLiveStatus: document.getElementById("browserLiveStatus"),
+  browserConsole: document.getElementById("browserConsole"),
+  viteStopBtn: document.getElementById("viteStopBtn"),
   browserSessions: document.getElementById("browserSessions"),
   automationList: document.getElementById("automationList"),
   newChatBtn: document.getElementById("newChatBtn"),
@@ -1808,8 +1815,12 @@ const renderAutomations = () => {
 
 const normalizeUrl = () => {
   let url = els.browserUrl.value.trim();
-  if (!url) url = "https://example.com";
-  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+  if (!url) url = "http://localhost:5173";
+  if (!/^https?:\/\//i.test(url)) {
+    url = /^(localhost|127\.|0\.0\.0\.0|\[::1\]|[a-z0-9.-]+:\d+)/i.test(url)
+      ? `http://${url}`
+      : `https://${url}`;
+  }
   els.browserUrl.value = url;
   return url;
 };
@@ -1820,6 +1831,87 @@ const showFramePreview = () => {
   els.browserFrame.hidden = false;
   els.browserFrame.src = url;
   return url;
+};
+
+const setBrowserLiveStatus = (payload = {}) => {
+  const active = Boolean(payload.active);
+  const title = payload.title ? ` · ${payload.title}` : "";
+  const url = payload.url || payload.detectedUrl || normalizeUrl();
+  els.browserLiveStatus.textContent = active ? `Live · ${url}${title}` : payload.detectedUrl ? `Detected Vite at ${payload.detectedUrl}` : "Idle";
+  els.browserLiveStatus.classList.toggle("is-live", active);
+  if (payload.detectedUrl && !els.browserUrl.value.trim()) {
+    els.browserUrl.value = payload.detectedUrl;
+  }
+  const logs = Array.isArray(payload.logs) ? payload.logs.slice(-8) : [];
+  els.browserConsole.textContent = logs.length
+    ? logs.map((log) => `[${log.level || log.type || "log"}] ${log.text || log.url || ""}`).join("\n")
+    : "No browser logs yet.";
+};
+
+const loadBrowserStatus = async () => {
+  try {
+    const payload = await api("/api/vite-browser/status");
+    setBrowserLiveStatus(payload);
+    if (payload.detectedUrl && els.browserUrl.value === "http://localhost:5173" && payload.detectedUrl !== els.browserUrl.value) {
+      els.browserUrl.value = payload.detectedUrl;
+    }
+    return payload;
+  } catch (error) {
+    els.browserLiveStatus.textContent = error.message;
+    els.browserLiveStatus.classList.remove("is-live");
+    return null;
+  }
+};
+
+const fetchLiveBrowserFrame = async () => {
+  try {
+    const response = await fetch(`/api/vite-browser/screenshot?t=${Date.now()}`);
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || "Live browser is not ready.");
+    }
+    const blob = await response.blob();
+    if (state.browserShotUrl) URL.revokeObjectURL(state.browserShotUrl);
+    state.browserShotUrl = URL.createObjectURL(blob);
+    els.browserShot.src = state.browserShotUrl;
+    els.browserShot.hidden = false;
+    els.browserFrame.hidden = true;
+  } catch (error) {
+    console.warn(error.message);
+  }
+};
+
+const stopLiveBrowserPolling = () => {
+  clearInterval(state.browserLiveTimer);
+  clearInterval(state.browserStatusTimer);
+  state.browserLiveTimer = null;
+  state.browserStatusTimer = null;
+};
+
+const startLiveBrowserPolling = () => {
+  stopLiveBrowserPolling();
+  fetchLiveBrowserFrame();
+  loadBrowserStatus();
+  state.browserLiveTimer = setInterval(fetchLiveBrowserFrame, 900);
+  state.browserStatusTimer = setInterval(loadBrowserStatus, 2200);
+};
+
+const startViteBrowser = async () => {
+  els.previewBtn.disabled = true;
+  try {
+    const payload = await api("/api/vite-browser/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: normalizeUrl() }),
+    });
+    if (payload.url) els.browserUrl.value = payload.url;
+    setBrowserLiveStatus(payload);
+    startLiveBrowserPolling();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    els.previewBtn.disabled = false;
+  }
 };
 
 const captureScreenshot = async (options = {}) => {
@@ -1844,20 +1936,36 @@ const captureScreenshot = async (options = {}) => {
 };
 
 const loadFrame = () => {
-  showFramePreview();
-  captureScreenshot({ silent: true });
+  startViteBrowser();
 };
 
 const openVisibleBrowser = async () => {
   try {
-    await api("/api/browser-open", {
+    const payload = await api("/api/vite-browser/reload", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url: normalizeUrl() }),
     });
+    setBrowserLiveStatus(payload);
+    startLiveBrowserPolling();
   } catch (error) {
     alert(error.message);
   }
+};
+
+const stopViteBrowser = async () => {
+  try {
+    const payload = await api("/api/vite-browser/stop", { method: "POST" });
+    stopLiveBrowserPolling();
+    setBrowserLiveStatus(payload);
+  } catch (error) {
+    alert(error.message);
+  }
+};
+
+const openBrowserPanel = () => {
+  document.body.classList.add("is-browser-view");
+  loadBrowserStatus();
 };
 
 const setMobilePreviewSize = (size) => {
@@ -2176,6 +2284,8 @@ els.stopBtn.addEventListener("click", stopCurrentTurn);
 els.previewBtn.addEventListener("click", loadFrame);
 els.shotBtn.addEventListener("click", () => captureScreenshot());
 els.openBrowserBtn.addEventListener("click", openVisibleBrowser);
+els.viteStopBtn.addEventListener("click", stopViteBrowser);
+els.browserViewBtn.addEventListener("click", openBrowserPanel);
 els.mobilePreviewBtn.addEventListener("click", openMobilePreview);
 els.mobilePreviewInlineBtn.addEventListener("click", openMobilePreview);
 els.mobilePreviewClose.addEventListener("click", closeMobilePreview);
@@ -2195,9 +2305,9 @@ window.addEventListener("resize", () => {
 });
 window.visualViewport?.addEventListener("resize", syncViewportHeight);
 
-els.browserUrl.value = "https://example.com";
+els.browserUrl.value = "http://localhost:5173";
 showFramePreview();
-captureScreenshot({ silent: true });
+loadBrowserStatus();
 setPhonePaired(state.phonePaired);
 syncPromptSize();
 startAppVersionPolling();

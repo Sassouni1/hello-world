@@ -1582,6 +1582,14 @@ body.is-phone-session .phone-pair-banner:not([hidden]) {
   background: #181818;
 }
 
+body.is-browser-view .app-shell {
+  grid-template-columns: 330px minmax(0, 1fr) 360px;
+}
+
+body.is-browser-view .browser-panel {
+  display: flex;
+}
+
 .panel-block {
   border: 1px solid #2c2c2c;
   border-radius: 18px;
@@ -1611,9 +1619,31 @@ body.is-phone-session .phone-pair-banner:not([hidden]) {
 }
 
 .browser-actions {
+  display: flex;
+  flex-wrap: wrap;
   justify-content: flex-start;
   gap: 8px;
   margin-top: 10px;
+}
+
+.browser-live-status {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  margin-top: 10px;
+  color: #a7f7ff;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.browser-live-status.is-live::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  margin-right: 8px;
+  border-radius: 999px;
+  background: #27d8ff;
+  box-shadow: 0 0 18px rgba(39, 216, 255, 0.7);
 }
 
 .preview-frame {
@@ -1632,6 +1662,21 @@ body.is-phone-session .phone-pair-banner:not([hidden]) {
   border: 0;
   object-fit: cover;
   display: block;
+}
+
+.browser-console {
+  max-height: 118px;
+  overflow: auto;
+  margin-top: 10px;
+  border: 1px solid #2c2c2c;
+  border-radius: 13px;
+  padding: 9px 10px;
+  color: #9f9f99;
+  background: #111111;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .browser-sessions,
@@ -2122,7 +2167,21 @@ body.is-phone-session .phone-pair-banner:not([hidden]) {
   }
 
   .browser-panel {
-    grid-column: 1 / -1;
+    grid-column: auto;
+  }
+
+  body.is-browser-view .app-shell {
+    grid-template-columns: 330px minmax(0, 1fr);
+  }
+
+  body.is-browser-view .browser-panel {
+    position: fixed;
+    top: 56px;
+    right: 0;
+    bottom: 0;
+    z-index: 42;
+    width: min(390px, calc(100vw - 24px));
+    box-shadow: -22px 0 60px rgba(0, 0, 0, 0.45);
   }
 }
 
