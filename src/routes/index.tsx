@@ -59,7 +59,15 @@ type LocalBridgeInfo = {
 };
 
 const installCommand = "npm create vlix@latest";
-const localBridgeUrl = "http://127.0.0.1:3001";
+const requestedBridgePort =
+  typeof window === "undefined"
+    ? ""
+    : new URLSearchParams(window.location.search).get("bridgePort") || "";
+const normalizedBridgePort = (() => {
+  const port = Number(requestedBridgePort);
+  return Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : 3001;
+})();
+const localBridgeUrl = `http://127.0.0.1:${normalizedBridgePort}`;
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "";
 const initialPairingCode =
@@ -758,8 +766,8 @@ function Index() {
     setViteText("");
   };
 
-  if (!forceLandingPage && !pairingCode && localBridge?.localUrl) {
-    return <LocalConsoleMirror localUrl={localBridge.localUrl} />;
+  if (!forceLandingPage && !pairingCode && (desktopSetupRequested || localBridge?.localUrl)) {
+    return <LocalConsoleMirror localUrl={localBridge?.localUrl || localBridgeUrl} />;
   }
 
   return (

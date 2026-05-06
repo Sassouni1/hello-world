@@ -607,7 +607,7 @@ const localCloudConnectPage = () => `<!doctype html>
     const errorEl = document.getElementById("error");
     const params = new URLSearchParams(location.hash.slice(1));
     const setup = params.get("setup") || "";
-    const returnUrl = params.get("return") || ${JSON.stringify(hostedAppUrl({ connected: "1" }))};
+    const returnUrl = params.get("return") || ${JSON.stringify(hostedAppUrl({ connected: "1", bridgePort: PORT }))};
     const fail = (message) => {
       statusEl.textContent = "Could not sync this computer.";
       errorEl.hidden = false;
@@ -646,7 +646,9 @@ const hostedAppUrl = (params = {}) => {
   return url.toString();
 };
 
-const hostedDesktopSetupUrl = () => hostedAppUrl({ desktop: "1" });
+const hostedDesktopSetupUrl = () => hostedAppUrl({ desktop: "1", bridgePort: PORT });
+const startupBrowserUrl = () =>
+  process.env.VLIX_OPEN_LOCAL === "1" ? localOrigin() : hostedDesktopSetupUrl();
 
 const sha256Hex = (value) => crypto.createHash("sha256").update(String(value)).digest("hex");
 
@@ -860,8 +862,25 @@ const bridgeInfo = (req, account = readBridgeAccount()) => ({
 
 const openUrl = (url) => {
   const platform = process.platform;
+  const macChromePaths = [
+    "/Applications/Google Chrome.app",
+    path.join(os.homedir(), "Applications", "Google Chrome.app"),
+  ];
+  const useChrome = platform === "darwin" && macChromePaths.some((item) => fs.existsSync(item));
+  if (useChrome) {
+    const child = spawn(
+      "osascript",
+      ["-e", `tell application "Google Chrome" to open location ${JSON.stringify(url)}`],
+      { detached: true, stdio: "ignore" },
+    );
+    child.unref();
+    return;
+  }
   const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
-  const args = platform === "win32" ? ["/c", "start", "", url] : [url];
+  const args =
+    platform === "win32"
+      ? ["/c", "start", "", url]
+      : [url];
   const child = spawn(command, args, { detached: true, stdio: "ignore" });
   child.unref();
 };
@@ -869,7 +888,7 @@ const openUrl = (url) => {
 const probeExistingBridge = (port) =>
   new Promise((resolve) => {
     const req = http.get(
-      { hostname: "127.0.0.1", port, path: "/api/bridge/info", timeout: 700 },
+      { hostname: "127.0.0.1", port, path: "/api/bridge/info", timeout: 2500 },
       (res) => {
         let body = "";
         res.setEncoding("utf8");
@@ -884,10 +903,7 @@ const probeExistingBridge = (port) =>
           }
           try {
             const info = JSON.parse(body);
-            resolve(
-              info?.name === PACKAGE_NAME &&
-                String(info?.version || "") === String(packageJson.version || ""),
-            );
+            resolve(info?.name === PACKAGE_NAME);
           } catch {
             resolve(false);
           }
@@ -5898,13 +5914,14 @@ const startServer = () => {
   server.listen(PORT, HOST, () => {
     const url = localOrigin();
     const setupUrl = hostedDesktopSetupUrl();
+    const browserUrl = startupBrowserUrl();
     console.log(`Vlix Bridge listening on ${url}`);
     console.log(`Hosted Vlix app available at ${setupUrl}`);
-    console.log(`Opening local Command IQ Console at ${url}`);
+    console.log(`Opening ${browserUrl === url ? "local Command IQ Console" : "hosted Vlix setup"} at ${browserUrl}`);
     startCloudSync();
     if (process.env.OPEN_ON_START === "1") {
       try {
-        openUrl(url);
+        openUrl(browserUrl);
       } catch (error) {
         console.warn(`Unable to open browser automatically: ${error.message}`);
       }
@@ -5921,11 +5938,12 @@ server.on("error", async (error) => {
   const url = localOrigin();
   if (await probeExistingBridge(PORT)) {
     const setupUrl = hostedDesktopSetupUrl();
+    const browserUrl = startupBrowserUrl();
     console.log(`Vlix Bridge is already running on ${url}`);
     console.log(`Hosted Vlix app available at ${setupUrl}`);
-    console.log(`Opening local Command IQ Console at ${url}`);
+    console.log(`Opening ${browserUrl === url ? "local Command IQ Console" : "hosted Vlix setup"} at ${browserUrl}`);
     try {
-      openUrl(url);
+      openUrl(browserUrl);
     } catch (error) {
       console.warn(`Unable to open browser automatically: ${error.message}`);
     }
