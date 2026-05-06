@@ -36,7 +36,7 @@
           <button type="button">Dashboard</button>
           <button type="button">Sessions</button>
           <button class="is-active" type="button">Messages</button>
-          <button id="browserViewBtn" type="button">Browser</button>
+          <button id="browserViewBtn" type="button">Live Preview</button>
           <button id="mobilePreviewBtn" type="button">Mobile</button>
           <button id="setupBridgeBtn" type="button">Bridge</button>
           <button type="button">Settings</button>
@@ -89,8 +89,8 @@
 
         <button class="nav-row" id="browserNavBtn" type="button">
           <span>▣</span>
-          <strong>Browser preview</strong>
-          <em>URL</em>
+          <strong>Live Preview</strong>
+          <em>Playwright</em>
         </button>
 
         <section class="metric-strip" aria-label="Session stats">
@@ -205,12 +205,12 @@
         </form>
       </section>
 
-      <aside class="browser-panel" aria-label="Browser visibility">
+      <aside class="browser-panel" aria-label="Playwright Live Preview">
         <section class="panel-block">
           <header class="panel-heading">
             <div>
-            <p class="eyebrow">Browser</p>
-            <h2>Browser preview</h2>
+            <p class="eyebrow">Playwright</p>
+            <h2>Live Preview</h2>
             </div>
             <button class="icon-btn" id="shotBtn" title="Refresh screenshot" type="button">
               ⌁
@@ -218,21 +218,21 @@
           </header>
 
           <label class="url-row">
-            <span>Preview URL</span>
+            <span>Live URL</span>
             <input id="browserUrl" type="url" />
           </label>
 
           <div class="browser-actions">
-            <button id="previewBtn" class="secondary-btn" type="button">Use URL</button>
-            <button id="openBrowserBtn" class="secondary-btn" type="button">Open bridge browser</button>
-            <button id="viteStopBtn" class="secondary-btn" type="button">Stop bridge browser</button>
+            <button id="previewBtn" class="secondary-btn" type="button">Open preview</button>
+            <button id="openBrowserBtn" class="secondary-btn" type="button">Reload preview</button>
+            <button id="viteStopBtn" class="secondary-btn" type="button">Stop preview</button>
           </div>
           <div class="browser-live-status" id="browserLiveStatus">Idle</div>
           <div class="vite-targets" id="browserCandidates" hidden></div>
 
           <div class="preview-frame">
-            <iframe id="browserFrame" title="Browser preview"></iframe>
-            <img id="browserShot" alt="Browser screenshot preview" hidden />
+            <iframe id="browserFrame" title="Playwright Live Preview"></iframe>
+            <img id="browserShot" alt="Playwright Live Preview screenshot" hidden />
           </div>
 
           <div class="browser-remote-input" hidden>

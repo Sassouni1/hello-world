@@ -68,9 +68,15 @@ const state = {
   browserLiveTimer: null,
   browserStatusTimer: null,
   browserShotUrl: "",
+  browserRenderedUrl: "",
   browserDomActive: false,
   browserUrlAuto: "",
   browserUrlManual: false,
+  browserStatusRequestId: 0,
+  browserStatusInFlightRequestId: 0,
+  browserFrameRequestId: 0,
+  browserAutoStartKey: "",
+  browserAutoStopKey: "",
 };
 
 const els = {
@@ -425,7 +431,10 @@ const api = async (url, options) => {
   const contentType = response.headers.get("content-type") || "";
   const payload = contentType.includes("application/json") ? await response.json() : await response.blob();
   if (!response.ok) {
-    throw new Error(payload.error || `Request failed with ${response.status}`);
+    const error = new Error(payload.error || `Request failed with ${response.status}`);
+    error.payload = payload;
+    error.status = response.status;
+    throw error;
   }
   return payload;
 };
@@ -1468,11 +1477,13 @@ const selectChat = async (id) => {
   state.selectedChatId = id;
   state.browserUrlAuto = "";
   state.browserUrlManual = false;
+  state.browserStatusRequestId += 1;
   state.isComposingNewChat = false;
   stopChatPolling();
   els.automationNav.classList.remove("is-active");
   closeMobileDrawer();
   renderChats();
+  if (document.body.classList.contains("is-browser-view")) clearBrowserPreview();
   const pendingChat = state.chats.find((chat) => chat.id === id);
   const pendingWorking = pendingChat ? chatIsWorking(pendingChat) : false;
   els.threadTitle.textContent = pendingChat?.title || "Loading";
@@ -1483,10 +1494,13 @@ const selectChat = async (id) => {
     els.sendBtn.disabled = true;
   }
   setStatus(pendingWorking ? "Working" : "Loading", pendingWorking ? "running" : "");
+  if (document.body.classList.contains("is-browser-view")) {
+    loadBrowserStatus({ force: true });
+  }
 
   const loaded = await loadSelectedChat(id, { stickToBottom: true });
   if (loaded) startChatPolling();
-  loadBrowserStatus();
+  loadBrowserStatus({ force: true });
 };
 
 const startNewChat = () => {
@@ -1841,138 +1855,247 @@ const normalizeUrl = () => {
   return url;
 };
 
-const selectedChatBrowserQuery = () =>
-  state.selectedChatId ? `?chatId=${encodeURIComponent(state.selectedChatId)}` : "";
+const currentBrowserChatId = () =>
+  document.querySelector(".chat-card.is-active[data-id]")?.dataset?.id || state.selectedChatId || "";
 
-const showFramePreview = () => {
-  const url = normalizeUrl();
-  if (!url) {
-    alert("No reachable Vite browser was found for the selected chat.");
-    return "";
-  }
-  state.browserDomActive = false;
-  els.browserShot.hidden = true;
-  els.browserFrame.hidden = false;
-  els.browserFrame.removeAttribute("srcdoc");
-  els.browserFrame.src = url;
-  els.browserLiveStatus.textContent = `URL preview · separate browser context · ${url}`;
-  els.browserLiveStatus.classList.add("is-live");
-  return url;
+const selectedChatBrowserQuery = () => {
+  const chatId = currentBrowserChatId();
+  return chatId ? `?chatId=${encodeURIComponent(chatId)}` : "";
 };
 
-const showPassiveViteFrame = (url) => {
-  if (!url) return;
+const showFramePreview = () => {
+  startViteBrowser();
+  return els.browserUrl.value.trim();
+};
+
+const renderViteTargetChoices = (targets = [], selectedTarget = "") => {
+  if (!els.browserCandidates) return;
+  const safeTargets = Array.isArray(targets)
+    ? targets
+        .filter((target) => target?.url)
+        .slice(0, 6)
+    : [];
+  els.browserCandidates.hidden = safeTargets.length === 0;
+  els.browserCandidates.innerHTML = safeTargets.length
+    ? `
+        <span>${selectedTarget ? "Detected target" : "Available local targets"}</span>
+        ${safeTargets
+          .map(
+            (target) => `
+              <button type="button" data-vite-url="${escapeHtml(target.url)}" title="${escapeHtml(
+                [target.url, target.title, target.source].filter(Boolean).join(" · ")
+              )}">
+                ${escapeHtml(target.title || target.url)}
+              </button>
+            `
+          )
+          .join("")}
+      `
+    : "";
+};
+
+const clearBrowserPreview = (status = "Loading selected chat browser...") => {
   if (state.browserShotUrl) {
     URL.revokeObjectURL(state.browserShotUrl);
     state.browserShotUrl = "";
   }
+  state.browserRenderedUrl = "";
+  state.browserFrameRequestId += 1;
   state.browserDomActive = false;
-  els.browserShot.hidden = true;
-  els.browserFrame.hidden = false;
+  els.browserFrame.removeAttribute("src");
   els.browserFrame.removeAttribute("srcdoc");
-  if (els.browserFrame.getAttribute("src") !== url) els.browserFrame.src = url;
+  els.browserFrame.hidden = true;
+  els.browserShot.removeAttribute("src");
+  els.browserShot.hidden = true;
+  els.browserUrl.value = "";
+  state.browserUrlAuto = "";
+  state.browserUrlManual = false;
+  state.browserAutoStartKey = "";
+  els.browserLiveStatus.textContent = status;
+  els.browserLiveStatus.classList.remove("is-live");
 };
 
-const renderViteTargetChoices = () => {
-  if (!els.browserCandidates) return;
-  els.browserCandidates.hidden = true;
-  els.browserCandidates.innerHTML = "";
+const mirrorShellOrigin = (() => {
+  try {
+    const value = new URLSearchParams(window.location.search).get("mirrorOrigin") || "";
+    return value ? new URL(value).origin : "";
+  } catch {
+    return "";
+  }
+})();
+
+const browserUrlIsThisConsole = (url = "") => {
+  try {
+    const parsed = new URL(url, window.location.href);
+    return parsed.origin === window.location.origin || Boolean(mirrorShellOrigin && parsed.origin === mirrorShellOrigin);
+  } catch {
+    return false;
+  }
+};
+
+const setBrowserModeClass = (mode) => {
+  els.browserLiveStatus.classList.remove("is-real", "is-preview", "is-none", "is-error");
+  els.browserLiveStatus.classList.toggle("is-live", mode === "preview");
+  els.browserLiveStatus.classList.add(
+    mode === "preview" ? "is-preview" : mode === "error" ? "is-error" : "is-none"
+  );
 };
 
 const setBrowserLiveStatus = (payload = {}) => {
   const active = Boolean(payload.active);
   const title = payload.title ? ` · ${payload.title}` : "";
   const selectedTarget = payload.selectedBrowser?.targetUrl || payload.detectedUrl || "";
-  const availableTargets = Array.isArray(payload.availableViteTargets) ? payload.availableViteTargets : [];
-  const fallbackTarget = availableTargets.find((target) => target?.url && target.url !== selectedTarget)?.url || "";
-  const inputTarget = selectedTarget || fallbackTarget;
+  const mode = payload.mode || (active ? "preview" : "none");
+  const reason = payload.reason || payload.health?.reason || "";
   const activeUrl = payload.url || "";
-  renderViteTargetChoices(availableTargets, selectedTarget);
-  if (
-    inputTarget &&
-    (!state.browserUrlManual ||
+  renderViteTargetChoices(payload.availableViteTargets || [], selectedTarget);
+  if (mode === "preview" && active && activeUrl) {
+    if (
+      !state.browserUrlManual ||
       !els.browserUrl.value.trim() ||
       els.browserUrl.value === state.browserUrlAuto ||
-      els.browserUrl.value === "http://localhost:5173")
-  ) {
-    els.browserUrl.value = inputTarget;
-    state.browserUrlAuto = inputTarget;
-    state.browserUrlManual = false;
-  }
-  if (selectedTarget) {
-    showPassiveViteFrame(selectedTarget);
-    if (active && activeUrl && activeUrl !== selectedTarget) {
-      els.browserLiveStatus.textContent = `URL preview only · separate browser context · ${selectedTarget}`;
-    } else if (active && activeUrl) {
-      els.browserLiveStatus.textContent = `Bridge browser preview · separate browser context · ${activeUrl}${title}`;
-    } else {
-      els.browserLiveStatus.textContent = `URL preview only · separate browser context · ${selectedTarget}`;
+      els.browserUrl.value === "http://localhost:5173"
+    ) {
+      els.browserUrl.value = activeUrl;
+      state.browserUrlAuto = activeUrl;
+      state.browserUrlManual = false;
     }
-  } else if (payload.selectedBrowser && !selectedTarget) {
-    if (fallbackTarget) {
-      showPassiveViteFrame(activeUrl || fallbackTarget);
-      els.browserLiveStatus.textContent = `No URL from this chat · previewing ${activeUrl || fallbackTarget}`;
-    } else {
-      if (!state.browserUrlManual) {
-        els.browserUrl.value = "";
-        state.browserUrlAuto = "";
+    if (state.browserRenderedUrl && state.browserRenderedUrl !== activeUrl) {
+      if (state.browserShotUrl) {
+        URL.revokeObjectURL(state.browserShotUrl);
+        state.browserShotUrl = "";
       }
+      state.browserRenderedUrl = "";
       state.browserDomActive = false;
       els.browserFrame.removeAttribute("src");
       els.browserFrame.removeAttribute("srcdoc");
       els.browserFrame.hidden = true;
+      els.browserShot.removeAttribute("src");
       els.browserShot.hidden = true;
-      els.browserLiveStatus.textContent = "No reachable Vite browser for the selected chat";
     }
-  } else if (active && activeUrl) {
-    showPassiveViteFrame(activeUrl);
-    els.browserLiveStatus.textContent = `Bridge browser preview · ${activeUrl}${title}`;
+    els.browserLiveStatus.textContent = `Playwright Live Preview · ${activeUrl}${title}`;
+    setBrowserModeClass("preview");
+  } else if (selectedTarget) {
+    if (
+      !state.browserUrlManual ||
+      !els.browserUrl.value.trim() ||
+      els.browserUrl.value === state.browserUrlAuto ||
+      els.browserUrl.value === "http://localhost:5173"
+    ) {
+      els.browserUrl.value = selectedTarget;
+      state.browserUrlAuto = selectedTarget;
+      state.browserUrlManual = false;
+    }
+    state.browserDomActive = false;
+    els.browserFrame.removeAttribute("src");
+    els.browserFrame.removeAttribute("srcdoc");
+    els.browserFrame.hidden = true;
+    els.browserShot.hidden = true;
+    els.browserLiveStatus.textContent = reason || "Live Preview target found. Open preview to control it.";
+    setBrowserModeClass("none");
+  } else if (payload.selectedBrowser && !selectedTarget) {
+    if (!state.browserUrlManual) {
+      els.browserUrl.value = "";
+      state.browserUrlAuto = "";
+    }
+    state.browserDomActive = false;
+    els.browserFrame.removeAttribute("src");
+    els.browserFrame.removeAttribute("srcdoc");
+    els.browserFrame.hidden = true;
+    els.browserShot.hidden = true;
+    els.browserLiveStatus.textContent = reason || "No Playwright Live Preview target for this chat yet";
+    setBrowserModeClass("none");
   } else {
-    els.browserLiveStatus.textContent = "Idle";
+    els.browserLiveStatus.textContent = reason || "No Playwright Live Preview yet";
+    setBrowserModeClass("none");
   }
-  els.browserLiveStatus.classList.toggle(
-    "is-live",
-    Boolean(selectedTarget || fallbackTarget || (active && !payload.selectedBrowser))
-  );
   const logs = Array.isArray(payload.logs) ? payload.logs.slice(-8) : [];
   els.browserConsole.textContent = logs.length
     ? logs.map((log) => `[${log.level || log.type || "log"}] ${log.text || log.url || ""}`).join("\n")
-    : "No browser logs yet.";
+    : mode === "preview"
+      ? "Playwright Live Preview has no logs yet."
+      : reason || "No Playwright target is tied to this chat yet.";
 };
 
-const loadBrowserStatus = async () => {
+const targetFromBrowserStatus = (payload = {}) =>
+  payload.detectedUrl || payload.selectedBrowser?.targetUrl || "";
+
+const maybeAutoStartLivePreview = (payload = {}) => {
+  if (!document.body.classList.contains("is-browser-view")) return;
+  if (payload.mode === "preview" || payload.active) return;
+  const target = targetFromBrowserStatus(payload);
+  if (!target) return;
+  const key = `${currentBrowserChatId()}|${target}`;
+  if (state.browserAutoStartKey === key || state.browserAutoStopKey === key) return;
+  state.browserAutoStartKey = key;
+  if (!state.browserUrlManual) {
+    els.browserUrl.value = target;
+    state.browserUrlAuto = target;
+  }
+  startViteBrowser({ targetUrl: target, auto: true }).catch((error) => console.warn(error.message));
+};
+
+const loadBrowserStatus = async ({ force = false } = {}) => {
+  if (state.browserStatusInFlightRequestId && !force) return null;
+  const requestId = ++state.browserStatusRequestId;
+  state.browserStatusInFlightRequestId = requestId;
+  const requestedChatId = currentBrowserChatId();
   try {
-    const payload = await api(`/api/vite-browser/status${selectedChatBrowserQuery()}`);
+    const query = selectedChatBrowserQuery();
+    const payload = await api(`/api/vite-browser/status${query}`);
+    if (requestId !== state.browserStatusRequestId || requestedChatId !== currentBrowserChatId()) return null;
     setBrowserLiveStatus(payload);
+    if (payload.mode === "preview") {
+      fetchLiveBrowserFrame().catch((error) => console.warn(error.message));
+    } else {
+      maybeAutoStartLivePreview(payload);
+    }
     return payload;
   } catch (error) {
+    if (requestId !== state.browserStatusRequestId || requestedChatId !== currentBrowserChatId()) return null;
     els.browserLiveStatus.textContent = error.message;
     els.browserLiveStatus.classList.remove("is-live");
     return null;
+  } finally {
+    if (state.browserStatusInFlightRequestId === requestId) {
+      state.browserStatusInFlightRequestId = 0;
+    }
   }
 };
 
 const fetchLiveBrowserFrame = async () => {
+  const requestId = ++state.browserFrameRequestId;
+  const requestedChatId = currentBrowserChatId();
+  const isCurrent = () => requestId === state.browserFrameRequestId && requestedChatId === currentBrowserChatId();
   try {
-    if (await fetchLiveBrowserDom()) return;
-    const response = await fetch(`/api/vite-browser/screenshot?t=${Date.now()}`);
+    const separator = selectedChatBrowserQuery() ? "&" : "?";
+    const response = await fetch(`/api/vite-browser/screenshot${selectedChatBrowserQuery()}${separator}t=${Date.now()}`);
+    if (!isCurrent()) return;
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
       throw new Error(payload.error || "Live browser is not ready.");
     }
     const blob = await response.blob();
+    if (!isCurrent()) return;
     if (state.browserShotUrl) URL.revokeObjectURL(state.browserShotUrl);
     state.browserShotUrl = URL.createObjectURL(blob);
     els.browserShot.src = state.browserShotUrl;
     els.browserShot.hidden = false;
     els.browserFrame.hidden = true;
+    state.browserRenderedUrl = els.browserUrl.value.trim();
     state.browserDomActive = false;
   } catch (error) {
     console.warn(error.message);
   }
 };
 
-const renderViteDomMirror = (payload = {}) => {
+const renderViteDomMirror = (payload = {}, options = {}) => {
+  if (
+    (options.requestId && options.requestId !== state.browserFrameRequestId) ||
+    (options.requestedChatId && options.requestedChatId !== currentBrowserChatId())
+  ) {
+    return false;
+  }
   const mirror = payload.mirror || payload;
   if (!mirror?.html) return false;
   if (state.browserShotUrl) {
@@ -1984,21 +2107,22 @@ const renderViteDomMirror = (payload = {}) => {
   els.browserFrame.hidden = false;
   els.browserShot.hidden = true;
   state.browserDomActive = true;
+  state.browserRenderedUrl = mirror.url || payload.url || "";
   setBrowserLiveStatus({ ...payload, lastDomAt: mirror.capturedAt, url: mirror.url || payload.url, title: mirror.title || payload.title });
   return true;
 };
 
-const fetchLiveBrowserDom = async () => {
+const fetchLiveBrowserDom = async (options = {}) => {
   const separator = selectedChatBrowserQuery() ? "&" : "?";
   const payload = await api(`/api/vite-browser/dom${selectedChatBrowserQuery()}${separator}t=${Date.now()}`);
-  return renderViteDomMirror(payload);
+  return renderViteDomMirror(payload, options);
 };
 
 const sendViteBrowserInput = async (payload) => {
   const response = await api("/api/vite-browser/input", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...payload, chatId: state.selectedChatId || "" }),
+    body: JSON.stringify({ ...payload, chatId: currentBrowserChatId() }),
   });
   setBrowserLiveStatus(response);
   fetchLiveBrowserFrame();
@@ -2030,23 +2154,34 @@ const stopLiveBrowserPolling = () => {
 
 const startLiveBrowserPolling = () => {
   stopLiveBrowserPolling();
-  loadBrowserStatus();
+  loadBrowserStatus({ force: true });
   state.browserStatusTimer = setInterval(loadBrowserStatus, 2200);
 };
 
-const startViteBrowser = async () => {
+const startViteBrowser = async (options = {}) => {
+  const targetUrl = options.targetUrl || normalizeUrl();
   els.previewBtn.disabled = true;
   try {
     const payload = await api("/api/vite-browser/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: normalizeUrl(), chatId: state.selectedChatId || "" }),
+      body: JSON.stringify({ url: targetUrl, chatId: state.selectedChatId || "" }),
     });
     if (payload.url) els.browserUrl.value = payload.url;
     setBrowserLiveStatus(payload);
+    if (payload.mode === "preview" || payload.active) {
+      fetchLiveBrowserFrame().catch((error) => console.warn(error.message));
+    }
     startLiveBrowserPolling();
   } catch (error) {
-    alert(error.message);
+    const payload = error.payload || {};
+    setBrowserLiveStatus({
+      ...payload,
+      mode: "none",
+      active: false,
+      reason: payload.reason || error.message,
+      logs: payload.logs || [],
+    });
   } finally {
     els.previewBtn.disabled = false;
   }
@@ -2088,13 +2223,26 @@ const openVisibleBrowser = async () => {
     setBrowserLiveStatus(payload);
     startLiveBrowserPolling();
   } catch (error) {
-    alert(error.message);
+    const payload = error.payload || {};
+    setBrowserLiveStatus({
+      ...payload,
+      mode: "none",
+      active: false,
+      reason: payload.reason || error.message,
+      logs: payload.logs || [],
+    });
   }
 };
 
 const stopViteBrowser = async () => {
   try {
-    const payload = await api("/api/vite-browser/stop", { method: "POST" });
+    const currentUrl = els.browserUrl.value.trim() || state.browserUrlAuto || "";
+    state.browserAutoStopKey = `${currentBrowserChatId()}|${currentUrl}`;
+    const payload = await api("/api/vite-browser/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chatId: state.selectedChatId || "" }),
+    });
     stopLiveBrowserPolling();
     setBrowserLiveStatus(payload);
   } catch (error) {
@@ -2104,12 +2252,16 @@ const stopViteBrowser = async () => {
 
 const openBrowserPanel = () => {
   document.body.classList.add("is-browser-view");
-  loadBrowserStatus();
+  startLiveBrowserPolling();
+  window.setTimeout(loadBrowserStatus, 600);
 };
 
 const browserShotPoint = (event) => {
   const rect = els.browserShot.getBoundingClientRect();
-  const naturalRatio = 1280 / 820;
+  const naturalRatio =
+    els.browserShot.naturalWidth && els.browserShot.naturalHeight
+      ? els.browserShot.naturalWidth / els.browserShot.naturalHeight
+      : 1280 / 820;
   const displayedRatio = rect.width / rect.height;
   let imageWidth = rect.width;
   let imageHeight = rect.height;
@@ -2480,7 +2632,7 @@ els.browserCandidates?.addEventListener("click", (event) => {
   state.browserUrlManual = true;
   showFramePreview();
 });
-els.shotBtn.addEventListener("click", () => captureScreenshot());
+els.shotBtn.addEventListener("click", () => fetchLiveBrowserFrame());
 els.openBrowserBtn.addEventListener("click", startViteBrowser);
 els.viteStopBtn.addEventListener("click", stopViteBrowser);
 els.browserViewBtn.addEventListener("click", openBrowserPanel);

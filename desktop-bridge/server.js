@@ -1,5 +1,6 @@
 const http = require("http");
 const https = require("https");
+const net = require("net");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
@@ -25,6 +26,8 @@ const SESSION_INDEX = path.join(CODEX_HOME, "session_index.jsonl");
 const SESSION_ROOT = path.join(CODEX_HOME, "sessions");
 const ARCHIVE_ROOT = path.join(CODEX_HOME, "archived_sessions");
 const BROWSER_SESSION_ROOT = path.join(CODEX_HOME, "browser", "sessions");
+const BROWSER_USE_SOCKET_ROOT =
+  process.platform === "win32" ? "\\\\.\\pipe\\codex-browser-use" : "/tmp/codex-browser-use";
 const AUTOMATIONS_ROOT = path.join(CODEX_HOME, "automations");
 const BRIDGE_STATE_ROOT = path.join(CODEX_HOME, "remote_bridge");
 const BRIDGE_ACCOUNT_FILE = path.join(BRIDGE_STATE_ROOT, "account.json");
@@ -43,9 +46,16 @@ const OBSERVED_ACTIVE_FILE_MS = 120_000;
 const OBSERVED_PENDING_USER_MS = 10 * 60_000;
 const ACTIVE_MTIME_FALLBACK_MS = 8_000;
 const CHAT_LIST_CACHE_MS = 1500;
+const CHAT_DETAIL_CACHE_MS = 1000;
+const TASK_LIST_CACHE_MS = Number(process.env.TASK_LIST_CACHE_MS || 1000);
+const OBSERVED_TASK_SCAN_LIMIT = Number(process.env.OBSERVED_TASK_SCAN_LIMIT || 24);
 const CHAT_DETAIL_TAIL_BYTES = Number(process.env.CHAT_DETAIL_TAIL_BYTES || 4 * 1024 * 1024);
+const ACTIVE_SESSION_TAIL_BYTES = Number(
+  process.env.ACTIVE_SESSION_TAIL_BYTES || 4 * 1024 * 1024,
+);
 const CLOUD_POLL_MS = Number(process.env.VLIX_CLOUD_POLL_MS || 1200);
 const CLOUD_SESSION_SYNC_MS = Number(process.env.VLIX_CLOUD_SESSION_SYNC_MS || 15_000);
+const CLOUD_AUTH_BACKOFF_MS = Number(process.env.VLIX_CLOUD_AUTH_BACKOFF_MS || 5 * 60_000);
 const normalizePublicAppUrl = (value) => {
   const raw = String(value || "").trim() || "https://vlix1.lovable.app";
   try {
@@ -64,6 +74,8 @@ const PUBLIC_APP_URL = normalizePublicAppUrl(
 const tasks = new Map();
 const pairings = new Map();
 let chatListCache = { at: 0, chats: null };
+const chatDetailCache = new Map();
+const taskListCache = new Map();
 let queueDrainTimer = null;
 let cloudSyncState = {
   enabled: false,
@@ -73,9 +85,16 @@ let cloudSyncState = {
   accountId: "",
 };
 let cloudSyncTimer = null;
+let cloudSyncInFlight = false;
+let cloudSyncBackoffUntil = 0;
 let cloudSessionSyncAt = 0;
 let cloudViteFrameSyncAt = 0;
-const viteBrowser = {
+const codexIabStatusCache = new Map();
+const REMOTE_BROWSER_GLOBAL_KEY = "__global__";
+const remoteBrowsersByChatId = new Map();
+
+const createRemoteBrowserState = (key = REMOTE_BROWSER_GLOBAL_KEY) => ({
+  key,
   browser: null,
   page: null,
   url: "",
@@ -84,28 +103,41 @@ const viteBrowser = {
   lastDomAt: null,
   headless: false,
   logs: [],
+});
+
+const remoteBrowserKey = (sessionId = "") => String(sessionId || "").trim() || REMOTE_BROWSER_GLOBAL_KEY;
+
+const remoteBrowserState = (sessionId = "", { create = true } = {}) => {
+  const key = remoteBrowserKey(sessionId);
+  let state = remoteBrowsersByChatId.get(key);
+  if (!state && create) {
+    state = createRemoteBrowserState(key);
+    remoteBrowsersByChatId.set(key, state);
+  }
+  return state || null;
 };
 
-const rememberViteBrowserLog = (entry = {}) => {
-  viteBrowser.logs.push({
+const rememberViteBrowserLog = (state, entry = {}) => {
+  if (!state) return;
+  state.logs.push({
     at: new Date().toISOString(),
     type: entry.type || "log",
     level: entry.level || entry.type || "log",
     text: compact(String(entry.text || entry.message || entry.url || ""), 260),
     url: entry.url || "",
   });
-  if (viteBrowser.logs.length > 80) viteBrowser.logs.splice(0, viteBrowser.logs.length - 80);
+  if (state.logs.length > 80) state.logs.splice(0, state.logs.length - 80);
 };
 
-const attachViteBrowserPageEvents = (page) => {
+const attachViteBrowserPageEvents = (state, page) => {
   page.on("console", (message) => {
-    rememberViteBrowserLog({ type: "console", level: message.type(), text: message.text() });
+    rememberViteBrowserLog(state, { type: "console", level: message.type(), text: message.text() });
   });
   page.on("pageerror", (error) => {
-    rememberViteBrowserLog({ type: "pageerror", level: "error", text: error.message });
+    rememberViteBrowserLog(state, { type: "pageerror", level: "error", text: error.message });
   });
   page.on("requestfailed", (request) => {
-    rememberViteBrowserLog({
+    rememberViteBrowserLog(state, {
       type: "network",
       level: "error",
       text: `${request.method()} ${request.url()} failed: ${request.failure()?.errorText || "request failed"}`,
@@ -114,7 +146,7 @@ const attachViteBrowserPageEvents = (page) => {
   });
   page.on("response", (response) => {
     if (response.status() >= 400) {
-      rememberViteBrowserLog({
+      rememberViteBrowserLog(state, {
         type: "network",
         level: "warn",
         text: `${response.status()} ${response.url()}`,
@@ -124,14 +156,16 @@ const attachViteBrowserPageEvents = (page) => {
   });
 };
 
-const closeViteBrowser = async () => {
-  const browser = viteBrowser.browser;
-  viteBrowser.browser = null;
-  viteBrowser.page = null;
-  viteBrowser.url = "";
-  viteBrowser.startedAt = null;
-  viteBrowser.lastFrameAt = null;
-  viteBrowser.lastDomAt = null;
+const closeViteBrowser = async (sessionId = "") => {
+  const state = remoteBrowserState(sessionId, { create: false });
+  if (!state) return;
+  const browser = state.browser;
+  state.browser = null;
+  state.page = null;
+  state.url = "";
+  state.startedAt = null;
+  state.lastFrameAt = null;
+  state.lastDomAt = null;
   if (browser) {
     try {
       await browser.close();
@@ -467,6 +501,9 @@ const LOCAL_CLOUD_API_PATHS = new Set([
   "/api/vite-browser/reload",
   "/api/vite-browser/input",
   "/api/vite-browser/stop",
+  "/api/codex-browser/status",
+  "/api/codex-browser/screenshot",
+  "/api/codex-browser/input",
 ]);
 
 const allowedLocalApiOrigins = () =>
@@ -483,9 +520,18 @@ const allowedLocalApiOrigins = () =>
     `http://127.0.0.1:${PORT}`,
   ]);
 
+const isLoopbackOrigin = (origin) => {
+  try {
+    const { hostname } = new URL(origin);
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  } catch {
+    return false;
+  }
+};
+
 const localApiCorsHeaders = (req) => {
   const origin = String(req.headers.origin || "").trim();
-  if (!origin || !allowedLocalApiOrigins().has(origin)) return null;
+  if (!origin || (!allowedLocalApiOrigins().has(origin) && !isLoopbackOrigin(origin))) return null;
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
@@ -1063,6 +1109,9 @@ const readSessionRecords = (filePath, { tailBytes = CHAT_DETAIL_TAIL_BYTES } = {
   }
   return { records, partial };
 };
+
+const readActiveSessionRecords = (filePath) =>
+  readSessionRecords(filePath, { tailBytes: ACTIVE_SESSION_TAIL_BYTES }).records;
 
 const walk = (dir, matcher, out = []) => {
   if (!fs.existsSync(dir)) return out;
@@ -2097,7 +2146,7 @@ const sessionIsActivelyWorking = (sessionId) => {
   let latestMessagePhase = "";
   let latestEventAt = "";
 
-  for (const item of readJsonl(file)) {
+  for (const item of readActiveSessionRecords(file)) {
     if (item.timestamp) latestEventAt = item.timestamp;
     const payload = item.payload || {};
     if (item.type === "event_msg") {
@@ -2158,7 +2207,7 @@ const latestActiveTurnForSession = (sessionId) => {
   const file = sessionFileById().get(String(sessionId || ""));
   if (!file || !fs.existsSync(file)) return null;
   let active = null;
-  for (const item of readJsonl(file)) {
+  for (const item of readActiveSessionRecords(file)) {
     if (item.type !== "event_msg") continue;
     const payload = item.payload || {};
     if (payload.type === "task_started" && payload.turn_id) {
@@ -2289,9 +2338,20 @@ const getIndexedChat = (id) => {
   const indexRow = readJsonl(SESSION_INDEX).find((row) => row.id === id);
   const file = paths.get(id);
   if (!file) return null;
+  const stat = fs.statSync(file);
+  const cacheKey = String(id || "");
+  const cached = chatDetailCache.get(cacheKey);
+  if (
+    cached &&
+    cached.mtimeMs === stat.mtimeMs &&
+    cached.size === stat.size &&
+    Date.now() - cached.at <= CHAT_DETAIL_CACHE_MS
+  ) {
+    return cached.chat;
+  }
   const parsed = parseSessionMessages(file);
   const summary = parseSessionSummary(file);
-  return {
+  const chat = {
     id,
     title: compact(
       indexRow?.thread_name ||
@@ -2300,7 +2360,7 @@ const getIndexedChat = (id) => {
         id,
       96,
     ),
-    updatedAt: indexRow?.updated_at || fs.statSync(file).mtime.toISOString(),
+    updatedAt: indexRow?.updated_at || stat.mtime.toISOString(),
     file,
     folder: sessionFolder(file),
     folderLabel: formatFolderLabel(sessionFolder(file)),
@@ -2314,6 +2374,12 @@ const getIndexedChat = (id) => {
     observedWorking: summary.observedWorking,
     parsed,
   };
+  chatDetailCache.set(cacheKey, { at: Date.now(), mtimeMs: stat.mtimeMs, size: stat.size, chat });
+  if (chatDetailCache.size > 24) {
+    const oldest = [...chatDetailCache.entries()].sort((a, b) => a[1].at - b[1].at)[0]?.[0];
+    if (oldest) chatDetailCache.delete(oldest);
+  }
+  return chat;
 };
 
 const parseTomlAllowedOrigins = (source) => {
@@ -2449,12 +2515,30 @@ const publicTask = (task) => ({
   observed: Boolean(task.observed),
 });
 
+const recentSessionFilesForAccount = (account, limit = OBSERVED_TASK_SCAN_LIMIT) => {
+  if (!isBridgeAccountIntegrated(account)) return [];
+  const allowed = account.legacyCodexAccess ? null : new Set(uniqueStrings(account.sessionIds));
+  return [...sessionFileById().entries()]
+    .filter(([sessionId]) => !allowed || allowed.has(sessionId))
+    .map(([sessionId, file]) => {
+      try {
+        const stat = fs.statSync(file);
+        return { sessionId, file, mtimeMs: stat.mtimeMs, updatedAt: stat.mtime.toISOString() };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .slice(0, Math.max(1, limit));
+};
+
 const reconcileTaskFromSessionFile = (task) => {
   if (!task || task.status !== "running" || !task.sessionId) return task;
   const file = sessionFileById().get(task.sessionId);
   if (!file || !fs.existsSync(file)) return task;
   const startedMs = Date.parse(task.startedAt || "") || 0;
-  const records = readJsonl(file);
+  const records = readActiveSessionRecords(file);
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const item = records[index];
     const payload = item.payload || {};
@@ -2475,6 +2559,9 @@ const reconcileTaskFromSessionFile = (task) => {
 
 const listActiveTasksForAccount = (account) => {
   if (!isBridgeAccountIntegrated(account)) return [];
+  const cacheKey = account.accountId || "active";
+  const cached = taskListCache.get(cacheKey);
+  if (cached && Date.now() - cached.at <= TASK_LIST_CACHE_MS) return cached.tasks;
   const active = [...tasks.values()]
     .map(reconcileTaskFromSessionFile)
     .filter((task) => task.status === "running" || task.status === "queued")
@@ -2490,27 +2577,38 @@ const listActiveTasksForAccount = (account) => {
       .map((task) => task.sessionId)
       .filter(Boolean),
   );
-  const observed = listChatsForAccount(account)
-    .filter((chat) => chat.observedWorking && !activeSessionIds.has(chat.id))
-    .map((chat) => ({
-      id: `observed-${chat.id}`,
-      sessionId: chat.id,
-      turnId: null,
-      cwd: chat.cwd || "",
-      status: "running",
-      startedAt: chat.lastMessageAt || chat.fileUpdatedAt || chat.updatedAt,
-      endedAt: null,
-      updatedAt: chat.fileUpdatedAt || chat.updatedAt,
-      finalMessage: "",
-      error: "",
-      model: "",
-      effort: "",
-      fullAuto: false,
-      observed: true,
-    }));
-  return [...active, ...observed].sort(
+  const observed = recentSessionFilesForAccount(account)
+    .filter(({ sessionId }) => !activeSessionIds.has(sessionId))
+    .map(({ sessionId, file, updatedAt }) => {
+      const summary = parseSessionSummary(file);
+      if (!summary.observedWorking) return null;
+      return {
+        id: `observed-${sessionId}`,
+        sessionId,
+        turnId: null,
+        cwd: summary.meta?.cwd || "",
+        status: "running",
+        startedAt: summary.lastMessageAt || summary.fileUpdatedAt || updatedAt,
+        endedAt: null,
+        updatedAt: summary.fileUpdatedAt || updatedAt,
+        finalMessage: "",
+        error: "",
+        model: "",
+        effort: "",
+        fullAuto: false,
+        observed: true,
+      };
+    })
+    .filter(Boolean);
+  const result = [...active, ...observed].sort(
     (a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0),
   );
+  taskListCache.set(cacheKey, { at: Date.now(), tasks: result });
+  if (taskListCache.size > 8) {
+    const oldest = [...taskListCache.entries()].sort((a, b) => a[1].at - b[1].at)[0]?.[0];
+    if (oldest) taskListCache.delete(oldest);
+  }
+  return result;
 };
 
 const accountPrivateWorkspace = (account) => {
@@ -3472,14 +3570,15 @@ const cloudViteDomPath = (config) => {
   return `${userSegment}/${config.accountId}/vite-browser/latest-dom.json`;
 };
 
-const uploadLatestViteFrameToCloud = async (config) => {
-  if (!viteBrowser.page) return null;
-  const image = await viteBrowser.page.screenshot({
+const uploadLatestViteFrameToCloud = async (config, sessionId = "") => {
+  const state = remoteBrowserState(sessionId, { create: false });
+  if (!state?.page) return null;
+  const image = await state.page.screenshot({
     type: "jpeg",
     quality: 58,
     fullPage: false,
   });
-  viteBrowser.lastFrameAt = new Date().toISOString();
+  state.lastFrameAt = new Date().toISOString();
   const pathName = cloudViteFramePath(config);
   await cloudStorageUpload(config, "bridge-attachments", pathName, image, "image/jpeg");
   cloudViteFrameSyncAt = Date.now();
@@ -3488,13 +3587,14 @@ const uploadLatestViteFrameToCloud = async (config) => {
     path: pathName,
     type: "image/jpeg",
     size: image.length,
-    updatedAt: viteBrowser.lastFrameAt,
+    updatedAt: state.lastFrameAt,
   };
 };
 
-const uploadLatestViteDomToCloud = async (config) => {
-  if (!viteBrowser.page) return null;
-  const mirror = await captureViteDomSnapshot();
+const uploadLatestViteDomToCloud = async (config, sessionId = "") => {
+  const state = remoteBrowserState(sessionId, { create: false });
+  if (!state?.page) return null;
+  const mirror = await captureViteDomSnapshot(sessionId);
   const body = Buffer.from(JSON.stringify(mirror), "utf8");
   const pathName = cloudViteDomPath(config);
   await cloudStorageUpload(config, "bridge-attachments", pathName, body, "application/json");
@@ -3508,16 +3608,17 @@ const uploadLatestViteDomToCloud = async (config) => {
   };
 };
 
-const uploadLatestViteMirrorToCloud = async (config) => {
-  if (!viteBrowser.page) return null;
+const uploadLatestViteMirrorToCloud = async (config, sessionId = "") => {
+  const state = remoteBrowserState(sessionId, { create: false });
+  if (!state?.page) return null;
   const result = {};
   try {
-    result.dom = await uploadLatestViteDomToCloud(config);
+    result.dom = await uploadLatestViteDomToCloud(config, sessionId);
   } catch (error) {
     console.warn(`Vlix cloud Vite DOM sync skipped: ${error.message}`);
   }
   try {
-    result.frame = await uploadLatestViteFrameToCloud(config);
+    result.frame = await uploadLatestViteFrameToCloud(config, sessionId);
   } catch (error) {
     console.warn(`Vlix cloud Vite frame sync skipped: ${error.message}`);
   }
@@ -3614,29 +3715,33 @@ const completeCloudStopCommand = async (config, command, sessionRow) => {
   });
 };
 
-const completeCloudBrowserCommand = async (config, command) => {
+const completeCloudBrowserCommand = async (config, command, sessionRow = null) => {
   const body =
     typeof command.body === "string" && command.body.trim()
       ? JSON.parse(command.body)
       : {};
   const action = String(body.action || body.type || "start");
+  const browserSessionId =
+    body.chatId || commandSessionThreadId(sessionRow) || command.session_id || REMOTE_BROWSER_GLOBAL_KEY;
+  const state = remoteBrowserState(browserSessionId);
   if (action === "start") {
-    await ensureViteBrowser(body.url || (await detectViteUrl()) || "http://localhost:5173");
+    await ensureViteBrowser(body.url || (await detectViteUrl(browserSessionId)) || "http://localhost:5173", browserSessionId);
   } else if (action === "reload") {
-    if (body.url || !viteBrowser.page) {
-      await ensureViteBrowser(body.url || viteBrowser.url || (await detectViteUrl()) || "http://localhost:5173");
+    if (body.url || !state.page) {
+      await ensureViteBrowser(body.url || state.url || (await detectViteUrl(browserSessionId)) || "http://localhost:5173", browserSessionId);
     } else {
-      await viteBrowser.page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 });
-      rememberViteBrowserLog({ type: "browser", level: "info", text: "Reloaded Vite browser from phone" });
+      await state.page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 });
+      rememberViteBrowserLog(state, { type: "browser", level: "info", text: "Reloaded Playwright Live Preview from phone" });
     }
   } else if (action === "stop") {
-    await closeViteBrowser();
+    await closeViteBrowser(browserSessionId);
   } else if (["click", "scroll", "type", "press"].includes(action)) {
-    await applyViteBrowserInput({ ...body, type: action });
+    await applyViteBrowserInput({ ...body, type: action, chatId: browserSessionId });
   } else {
     throw new Error(`Unsupported browser action: ${action}`);
   }
-  const frame = viteBrowser.page ? await uploadLatestViteMirrorToCloud(config) : null;
+  const updatedState = remoteBrowserState(browserSessionId, { create: false });
+  const frame = updatedState?.page ? await uploadLatestViteMirrorToCloud(config, browserSessionId) : null;
   await cloudUpdateCommand(config, command.id, {
     status: "completed",
     completed_at: new Date().toISOString(),
@@ -3646,7 +3751,6 @@ const completeCloudBrowserCommand = async (config, command) => {
 };
 
 const processCloudCommand = async (config, command) => {
-  if (command.kind === "browser") return completeCloudBrowserCommand(config, command);
   const sessionRow = command.session_id
     ? await cloudSelectSingle(
         config,
@@ -3654,6 +3758,7 @@ const processCloudCommand = async (config, command) => {
         `id=eq.${encodeURIComponent(command.session_id)}&account_id=eq.${encodeURIComponent(config.accountId)}`,
       )
     : null;
+  if (command.kind === "browser") return completeCloudBrowserCommand(config, command, sessionRow);
   if (command.kind !== "sync" && !sessionRow)
     throw new Error("Cloud command does not reference an available session.");
   if (command.kind === "message") return completeCloudMessageCommand(config, command, sessionRow);
@@ -3670,17 +3775,17 @@ const processCloudCommand = async (config, command) => {
 };
 
 const pollCloudCommands = async (config) => {
+  const deviceId = await cloudUpsertDevice(config);
   let account = readBridgeAccount();
   if (!isBridgeAccountIntegrated(account)) {
     await codexAppServer.ensure();
     account = connectBridgeAccount();
   }
-  account = syncBridgeAccountFromCodex(account);
   if (Date.now() - cloudSessionSyncAt > CLOUD_SESSION_SYNC_MS) {
-    await syncLocalSessionsToCloud(config, account);
     cloudSessionSyncAt = Date.now();
+    account = syncBridgeAccountFromCodex(account);
+    await syncLocalSessionsToCloud(config, account);
   }
-  const deviceId = await cloudUpsertDevice(config);
   cloudSyncState.enabled = true;
   cloudSyncState.lastPollAt = new Date().toISOString();
   const commands = await cloudTable(
@@ -3701,9 +3806,10 @@ const pollCloudCommands = async (config) => {
       });
     }
   }
-  if (viteBrowser.page && Date.now() - cloudViteFrameSyncAt > 1000) {
+  const globalRemoteBrowser = remoteBrowserState(REMOTE_BROWSER_GLOBAL_KEY, { create: false });
+  if (globalRemoteBrowser?.page && Date.now() - cloudViteFrameSyncAt > 1000) {
     try {
-      await uploadLatestViteMirrorToCloud(config);
+      await uploadLatestViteMirrorToCloud(config, REMOTE_BROWSER_GLOBAL_KEY);
     } catch (error) {
       console.warn(`Vlix cloud Vite mirror sync skipped: ${error.message}`);
     }
@@ -3736,12 +3842,20 @@ const startCloudSync = () => {
   };
   console.log(`Vlix cloud sync enabled for account ${config.accountId}.`);
   const tick = async () => {
+    if (cloudSyncInFlight) return;
+    if (Date.now() < cloudSyncBackoffUntil) return;
+    cloudSyncInFlight = true;
     try {
       await pollCloudCommands(config);
       cloudSyncState.lastError = "";
     } catch (error) {
       cloudSyncState.lastError = error.message || "Cloud sync failed.";
+      if (/401|JWT expired|invalid jwt|refresh/i.test(cloudSyncState.lastError)) {
+        cloudSyncBackoffUntil = Date.now() + CLOUD_AUTH_BACKOFF_MS;
+      }
       console.warn(`Vlix cloud sync: ${cloudSyncState.lastError}`);
+    } finally {
+      cloudSyncInFlight = false;
     }
   };
   tick();
@@ -3811,15 +3925,31 @@ const fetchTextWithTimeout = (target, timeoutMs = 650) =>
     });
   });
 
+const withTimeout = (promise, timeoutMs, fallback) =>
+  new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), timeoutMs);
+    Promise.resolve(promise)
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch(() => {
+        clearTimeout(timer);
+        resolve(fallback);
+      });
+  });
+
 const cleanDetectedUrl = (value) => {
   const raw = String(value || "")
     .trim()
     .split(/\\n|\\r|\n|\r|\s+##\s+|["'<>]/)[0]
+    .replace(/`/g, "")
     .replace(/[)`\].,;]+$/g, "");
   try {
     const parsed = new URL(raw);
     if (!/^https?:$/i.test(parsed.protocol)) return "";
     if (!["localhost", "127.0.0.1", "0.0.0.0"].includes(parsed.hostname)) return "";
+    parsed.pathname = parsed.pathname.replace(/\/{2,}/g, "/");
     return parsed.toString();
   } catch {
     return "";
@@ -3834,6 +3964,432 @@ const urlOrigin = (value) => {
     return `${parsed.protocol}//${parsed.host}`;
   } catch {
     return "";
+  }
+};
+
+const browserUseFrame = (message) => {
+  const body = Buffer.from(JSON.stringify(message), "utf8");
+  const header = Buffer.alloc(4);
+  if (os.endianness() === "LE") header.writeUInt32LE(body.length, 0);
+  else header.writeUInt32BE(body.length, 0);
+  return Buffer.concat([header, body]);
+};
+
+const parseBrowserUseFrames = (buffer) => {
+  const messages = [];
+  let offset = 0;
+  while (buffer.length - offset >= 4) {
+    const length =
+      os.endianness() === "LE" ? buffer.readUInt32LE(offset) : buffer.readUInt32BE(offset);
+    if (buffer.length - offset < 4 + length) break;
+    messages.push(JSON.parse(buffer.subarray(offset + 4, offset + 4 + length).toString("utf8")));
+    offset += 4 + length;
+  }
+  return { messages, remaining: buffer.subarray(offset) };
+};
+
+const browserUseSockets = () => {
+  if (process.platform === "win32") return [];
+  try {
+    return fs
+      .readdirSync(BROWSER_USE_SOCKET_ROOT)
+      .filter((name) => name.endsWith(".sock"))
+      .map((name) => {
+        const socketPath = path.join(BROWSER_USE_SOCKET_ROOT, name);
+        let mtimeMs = 0;
+        try {
+          mtimeMs = fs.statSync(socketPath).mtimeMs;
+        } catch {}
+        return { socketPath, mtimeMs };
+      })
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)
+      .map((item) => item.socketPath);
+  } catch {
+    return [];
+  }
+};
+
+const createBrowserUseClient = (socketPath) =>
+  new Promise((resolve, reject) => {
+    const socket = net.createConnection(socketPath);
+    const connectTimer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error("Browser Use socket connect timed out."));
+    }, 350);
+    let pendingData = Buffer.alloc(0);
+    let nextId = 1;
+    const pending = new Map();
+    const fail = (error) => {
+      for (const { reject: rejectRequest, timer } of pending.values()) {
+        clearTimeout(timer);
+        rejectRequest(error);
+      }
+      pending.clear();
+    };
+    socket.on("data", (chunk) => {
+      pendingData = Buffer.concat([pendingData, chunk]);
+      let parsed;
+      try {
+        parsed = parseBrowserUseFrames(pendingData);
+      } catch (error) {
+        fail(error);
+        socket.destroy();
+        return;
+      }
+      pendingData = parsed.remaining;
+      for (const message of parsed.messages) {
+        if (message.id == null) continue;
+        const request = pending.get(message.id);
+        if (!request) continue;
+        pending.delete(message.id);
+        clearTimeout(request.timer);
+        if (message.error) request.reject(new Error(message.error.message || "Browser Use error."));
+        else request.resolve(message.result);
+      }
+    });
+    socket.on("error", (error) => {
+      clearTimeout(connectTimer);
+      fail(error);
+      reject(error);
+    });
+    socket.on("close", () => fail(new Error("Browser Use socket closed.")));
+    socket.on("connect", () => {
+      clearTimeout(connectTimer);
+      resolve({
+        request(method, params = {}, timeoutMs = 2500) {
+          const id = nextId++;
+          return new Promise((resolveRequest, rejectRequest) => {
+            const timer = setTimeout(() => {
+              pending.delete(id);
+              rejectRequest(new Error(`${method} timed out.`));
+            }, timeoutMs);
+            pending.set(id, { resolve: resolveRequest, reject: rejectRequest, timer });
+            socket.write(browserUseFrame({ jsonrpc: "2.0", method, params, id }));
+          });
+        },
+        close() {
+          socket.destroy();
+        },
+      });
+    });
+  });
+
+const latestTurnIdsForSession = (sessionId, limit = 8) => {
+  const file = sessionFileById().get(String(sessionId || ""));
+  if (!file || !fs.existsSync(file)) return [];
+  const { records } = readSessionRecords(file, { tailBytes: 2 * 1024 * 1024 });
+  const turnIds = [];
+  const seen = new Set();
+  for (const item of records.slice().reverse()) {
+    const payload = item.payload || {};
+    const turnId = payload.turn_id || payload.turnId || item.turn_id || "";
+    if (!turnId || seen.has(turnId)) continue;
+    seen.add(turnId);
+    turnIds.push(turnId);
+    if (turnIds.length >= limit) break;
+  }
+  return turnIds;
+};
+
+const openCodexIabForSession = async (sessionId, options = {}) => {
+  const chatId = String(sessionId || "");
+  if (!chatId) return null;
+  const startedAt = Date.now();
+  const deadlineMs = Number(options.deadlineMs) || 1800;
+  const deadlineAt = startedAt + deadlineMs;
+  const sockets = browserUseSockets().slice(0, Number(options.socketLimit) || 16);
+  const turnIds = latestTurnIdsForSession(chatId, Number(options.turnLimit) || 2);
+  for (const socketPath of sockets) {
+    for (const turnId of turnIds) {
+      if (Date.now() >= deadlineAt) return null;
+      let client = null;
+      try {
+        client = await createBrowserUseClient(socketPath);
+        const sessionParams = { session_id: chatId, turn_id: turnId };
+        const info = await client.request("getInfo", sessionParams, Math.max(250, Math.min(650, deadlineAt - Date.now())));
+        if (info?.type !== "iab" || info.metadata?.codexSessionId !== chatId) {
+          client.close();
+          continue;
+        }
+        const tabs = await client.request("getTabs", sessionParams, Math.max(300, Math.min(800, deadlineAt - Date.now())));
+        const tab = (Array.isArray(tabs) ? tabs : []).find((item) => item.active) || tabs?.[0];
+        if (!tab) {
+          client.close();
+          continue;
+        }
+        return {
+          client,
+          sessionParams,
+          socketPath,
+          info,
+          tabs,
+          tab,
+          turnId,
+        };
+      } catch {
+        if (client) client.close();
+      }
+    }
+  }
+  return null;
+};
+
+const safeCodexIabStatus = async (sessionId = "") => {
+  const chatId = String(sessionId || "");
+  const cached = codexIabStatusCache.get(chatId);
+  if (cached && Date.now() - cached.at < 2500) return cached.value;
+  const turnIds = latestTurnIdsForSession(chatId, 2);
+  const socketCount = browserUseSockets().length;
+  const iab = await openCodexIabForSession(chatId, { deadlineMs: 3500, socketLimit: 16, turnLimit: 2 });
+  if (!iab) {
+    const diagnosis = turnIds.length
+      ? await diagnoseCodexIabForSession(chatId, {
+          deadlineMs: 2500,
+          socketLimit: 16,
+          turnLimit: 2,
+        })
+      : null;
+    const matchedPipe = diagnosis?.attempts?.find(
+      (attempt) => attempt.matchedSessionId === chatId || (attempt.ok && attempt.url),
+    );
+    const matchedNoTab = diagnosis?.attempts?.find(
+      (attempt) => attempt.matchedSessionId === chatId && !attempt.url,
+    );
+    const value = {
+      active: false,
+      socketCount,
+      turnIdsChecked: turnIds.length,
+      pipeMatched: Boolean(matchedPipe || matchedNoTab),
+      reason: matchedNoTab
+        ? `Matched a real Codex browser pipe, but no accessible browser tab is exposed yet${
+            matchedNoTab.error ? ` (${matchedNoTab.error})` : ""
+          }.`
+        : turnIds.length
+          ? "No matching Codex browser socket accepted this chat."
+          : "No turn id found.",
+    };
+    codexIabStatusCache.set(chatId, { at: Date.now(), value });
+    return value;
+  }
+  try {
+    const value = {
+      active: true,
+      kind: "codex-iab",
+      name: iab.info.name,
+      version: iab.info.version,
+      url: iab.tab.url || "",
+      title: iab.tab.title || "",
+      tabId: iab.tab.id,
+      tabs: (iab.tabs || []).map((tab) => ({
+        id: tab.id,
+        active: Boolean(tab.active),
+        title: tab.title || "",
+        url: tab.url || "",
+      })),
+      turnId: iab.turnId,
+      sessionId: String(sessionId || ""),
+      socketCount,
+    };
+    codexIabStatusCache.set(chatId, { at: Date.now(), value });
+    return value;
+  } finally {
+    iab.client.close();
+  }
+};
+
+const diagnoseCodexIabForSession = async (sessionId = "", options = {}) => {
+  const chatId = String(sessionId || "");
+  const sockets = browserUseSockets().slice(0, Number(options.socketLimit) || 16);
+  const turnIds = latestTurnIdsForSession(chatId, Number(options.turnLimit) || 4);
+  const attempts = [];
+  const startedAt = Date.now();
+  const deadlineAt = startedAt + (Number(options.deadlineMs) || 3500);
+  for (const socketPath of sockets) {
+    for (const turnId of turnIds) {
+      if (Date.now() >= deadlineAt) break;
+      let client = null;
+      const attempt = {
+        socket: path.basename(socketPath),
+        turnId,
+        ok: false,
+        type: "",
+        matchedSessionId: "",
+        title: "",
+        url: "",
+        error: "",
+      };
+      try {
+        client = await createBrowserUseClient(socketPath);
+        const info = await client.request(
+          "getInfo",
+          { session_id: chatId, turn_id: turnId },
+          Math.max(250, Math.min(650, deadlineAt - Date.now())),
+        );
+        attempt.ok = true;
+        attempt.type = info?.type || "";
+        attempt.matchedSessionId = info?.metadata?.codexSessionId || "";
+        attempt.title = info?.name || "";
+        if (info?.metadata?.codexSessionId === chatId) {
+          const tabs = await client.request(
+            "getTabs",
+            { session_id: chatId, turn_id: turnId },
+            Math.max(250, Math.min(650, deadlineAt - Date.now())),
+          );
+          const tab = (Array.isArray(tabs) ? tabs : []).find((item) => item.active) || tabs?.[0];
+          attempt.url = tab?.url || "";
+          attempt.title = tab?.title || attempt.title;
+        }
+      } catch (error) {
+        attempt.error = error.message || "Browser Use socket rejected this chat/turn.";
+      } finally {
+        if (client) client.close();
+      }
+      attempts.push(attempt);
+    }
+  }
+  return {
+    chatId,
+    socketCount: browserUseSockets().length,
+    socketsChecked: sockets.length,
+    turnIds,
+    attempts,
+    elapsedMs: Date.now() - startedAt,
+  };
+};
+
+const executeCodexIabCdp = async (iab, method, commandParams = {}, timeoutMs = 3500) =>
+  iab.client.request(
+    "executeCdp",
+    {
+      ...iab.sessionParams,
+      target: { tabId: Number(iab.tab.id) },
+      method,
+      commandParams,
+    },
+    timeoutMs,
+  );
+
+const captureCodexIabScreenshot = async (sessionId = "") => {
+  const iab = await openCodexIabForSession(sessionId);
+  if (!iab) throw new Error("No real Codex browser is exposed for this chat right now.");
+  try {
+    await iab.client.request("attach", { ...iab.sessionParams, tabId: Number(iab.tab.id) }, 1500);
+    const metrics = await executeCodexIabCdp(iab, "Page.getLayoutMetrics", {}, 2500);
+    const viewport = metrics?.cssVisualViewport || {
+      pageX: 0,
+      pageY: 0,
+      clientWidth: 1280,
+      clientHeight: 820,
+    };
+    const shot = await executeCodexIabCdp(
+      iab,
+      "Page.captureScreenshot",
+      {
+        format: "jpeg",
+        quality: 72,
+        clip: {
+          x: Number(viewport.pageX) || 0,
+          y: Number(viewport.pageY) || 0,
+          width: Math.min(Number(viewport.clientWidth) || 1280, 1800),
+          height: Math.min(Number(viewport.clientHeight) || 820, 1400),
+          scale: 1,
+        },
+      },
+      8000,
+    );
+    if (!shot?.data) throw new Error("Codex browser returned no screenshot data.");
+    return {
+      image: Buffer.from(shot.data, "base64"),
+      meta: {
+        active: true,
+        kind: "codex-iab",
+        url: iab.tab.url || "",
+        title: iab.tab.title || "",
+        tabId: iab.tab.id,
+        turnId: iab.turnId,
+        capturedAt: new Date().toISOString(),
+      },
+    };
+  } finally {
+    try {
+      await iab.client.request("detach", { ...iab.sessionParams, tabId: Number(iab.tab.id) }, 800);
+    } catch {}
+    iab.client.close();
+  }
+};
+
+const applyCodexIabInput = async (sessionId = "", input = {}) => {
+  const iab = await openCodexIabForSession(sessionId);
+  if (!iab) throw new Error("No real Codex browser is exposed for this chat right now.");
+  try {
+    if (!urlOrigin(iab.tab.url || "")) {
+      throw new Error("Real browser control is limited to local app URLs.");
+    }
+    await iab.client.request("attach", { ...iab.sessionParams, tabId: Number(iab.tab.id) }, 1500);
+    const metrics = await executeCodexIabCdp(iab, "Page.getLayoutMetrics", {}, 2500);
+    const viewport = metrics?.cssVisualViewport || { clientWidth: 1280, clientHeight: 820 };
+    const width = Number(viewport.clientWidth) || 1280;
+    const height = Number(viewport.clientHeight) || 820;
+    const x = Math.round(Math.max(0, Math.min(1, Number(input.xRatio) || 0.5)) * width);
+    const y = Math.round(Math.max(0, Math.min(1, Number(input.yRatio) || 0.5)) * height);
+    const type = String(input.type || "").trim();
+    if (type === "click") {
+      await executeCodexIabCdp(iab, "Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x,
+        y,
+        button: "none",
+      });
+      await executeCodexIabCdp(iab, "Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x,
+        y,
+        button: "left",
+        clickCount: 1,
+      });
+      await executeCodexIabCdp(iab, "Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x,
+        y,
+        button: "left",
+        clickCount: 1,
+      });
+    } else if (type === "scroll") {
+      await executeCodexIabCdp(iab, "Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        x,
+        y,
+        deltaX: Number(input.deltaX) || 0,
+        deltaY: Number(input.deltaY) || 0,
+      });
+    } else if (type === "type") {
+      const text = String(input.text || "");
+      if (text) await executeCodexIabCdp(iab, "Input.insertText", { text });
+    } else if (type === "press") {
+      const key = String(input.key || "Enter");
+      const code = key === "Enter" ? "Enter" : key;
+      const windowsVirtualKeyCode = key === "Enter" ? 13 : 0;
+      await executeCodexIabCdp(iab, "Input.dispatchKeyEvent", {
+        type: "keyDown",
+        key,
+        code,
+        windowsVirtualKeyCode,
+      });
+      await executeCodexIabCdp(iab, "Input.dispatchKeyEvent", {
+        type: "keyUp",
+        key,
+        code,
+        windowsVirtualKeyCode,
+      });
+    } else {
+      throw new Error("Unsupported real browser input.");
+    }
+    return safeCodexIabStatus(sessionId);
+  } finally {
+    try {
+      await iab.client.request("detach", { ...iab.sessionParams, tabId: Number(iab.tab.id) }, 800);
+    } catch {}
+    iab.client.close();
   }
 };
 
@@ -3879,6 +4435,33 @@ const isReachableViteUrl = async (target) => {
   } catch {
     return false;
   }
+};
+
+const isVlixBridgeOrigin = (target) => {
+  const url = cleanDetectedUrl(target);
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    const port = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
+    return ["localhost", "127.0.0.1", "0.0.0.0"].includes(parsed.hostname) && port === PORT;
+  } catch {
+    return false;
+  }
+};
+
+const looksLikeVlixShellHtml = (html = "") =>
+  /<title[^>]*>\s*Vlix\s*\|\s*Command local AI agents from anywhere\s*<\/title>/i.test(String(html)) ||
+  /Vlix local console mirror|Command IQ Console/i.test(String(html));
+
+const isVlixSelfViteTarget = async (target) => {
+  const url = cleanDetectedUrl(target);
+  if (!url) return true;
+  if (isVlixBridgeOrigin(url)) return true;
+  const parsed = new URL(url);
+  const originPage = await fetchTextWithTimeout(`${parsed.protocol}//${parsed.host}/`, 500);
+  if (originPage.ok && looksLikeVlixShellHtml(originPage.body)) return true;
+  const page = await fetchTextWithTimeout(url, 500);
+  return page.ok && looksLikeVlixShellHtml(page.body);
 };
 
 const extractCurrentUrlMentions = (text) => {
@@ -3944,8 +4527,9 @@ const selectedChatViteTarget = async (sessionId) => {
   for (const origin of allowedOrigins) addCandidate(origin, "browser-session-origin", 40);
 
   const reachable = [];
-  for (const candidate of candidates) {
-    const isVite = await isReachableViteUrl(candidate.url);
+  for (const candidate of candidates.sort((a, b) => b.score - a.score).slice(0, 6)) {
+    const isVite = await withTimeout(isReachableViteUrl(candidate.url), 650, false);
+    if (isVite && (await withTimeout(isVlixSelfViteTarget(candidate.url), 650, true))) continue;
     if (isVite) reachable.push({ ...candidate, isVite });
   }
 
@@ -3984,7 +4568,10 @@ const recentCodexViteUrl = async () => {
       const payload = item.payload || {};
       if (item.type !== "response_item" || payload.type !== "message") continue;
       for (const url of extractCurrentUrlMentions(textFromContent(payload.content)).reverse()) {
-        if (await isReachableViteUrl(url)) {
+        if (
+          (await withTimeout(isReachableViteUrl(url), 900, false)) &&
+          !(await withTimeout(isVlixSelfViteTarget(url), 900, true))
+        ) {
           recentCodexViteUrlCache = { at: Date.now(), url };
           return url;
         }
@@ -4023,8 +4610,8 @@ const titleFromHtml = (html = "") => {
   return match ? decodeHtmlText(match[1].replace(/\s+/g, " ").trim()) : "";
 };
 
-const liveViteTargets = async (sessionId = "") => {
-  const selected = sessionId ? await selectedChatViteTarget(sessionId) : null;
+const liveViteTargets = async (sessionId = "", selectedOverride = null) => {
+  const selected = selectedOverride || (sessionId ? await selectedChatViteTarget(sessionId) : null);
   const candidates = [];
   const seen = new Set();
   const addCandidate = (url, source, score) => {
@@ -4037,6 +4624,8 @@ const liveViteTargets = async (sessionId = "") => {
   for (const candidate of selected?.candidates || []) {
     addCandidate(candidate.url, candidate.source || "selected-chat", candidate.score || 120);
   }
+  if (sessionId) return candidates.sort((a, b) => b.score - a.score).slice(0, 8);
+
   const recent = await recentCodexViteUrl();
   if (recent) addCandidate(recent, "recent-codex-url", 90);
 
@@ -4051,81 +4640,156 @@ const liveViteTargets = async (sessionId = "") => {
   }
 
   const live = [];
-  for (const candidate of candidates) {
-    if (!(await isReachableViteUrl(candidate.url))) continue;
-    const page = await fetchTextWithTimeout(candidate.url, 500);
-    const title = page.ok ? titleFromHtml(page.body) : "";
-    let score = candidate.score;
-    if (/vlix|command local ai/i.test(title)) score += 45;
-    if (/lovable app/i.test(title)) score -= 25;
-    live.push({
-      ...candidate,
-      score,
-      title,
-    });
-  }
+  const probeCandidates = candidates.sort((a, b) => b.score - a.score).slice(0, 14);
+  const probed = await Promise.all(
+    probeCandidates.map(async (candidate) => {
+      if (!(await withTimeout(isReachableViteUrl(candidate.url), 900, false))) return null;
+      const page = await withTimeout(fetchTextWithTimeout(candidate.url, 500), 750, { ok: false, body: "" });
+      const title = page.ok ? titleFromHtml(page.body) : "";
+      if (looksLikeVlixShellHtml(page.body)) return null;
+      let score = candidate.score;
+      if (/vlix|command local ai/i.test(title)) score += 45;
+      if (/lovable app/i.test(title)) score -= 25;
+      return {
+        ...candidate,
+        score,
+        title,
+      };
+    })
+  );
+  live.push(...probed.filter(Boolean));
 
   live.sort((a, b) => b.score - a.score);
   return live.slice(0, 12);
 };
 
-const viteBrowserStatus = async (sessionId = "") => {
+const livePreviewChoices = async (sessionId = "", selectedOverride = null) => {
+  const selectedTargets = await liveViteTargets(sessionId, selectedOverride);
+  if (sessionId) return selectedTargets;
+  return selectedTargets;
+};
+
+const remoteBrowserPublicState = async (state) => {
+  if (!state) {
+    return {
+      active: false,
+      url: "",
+      title: "",
+      startedAt: null,
+      lastFrameAt: null,
+      lastDomAt: null,
+      headless: false,
+      logs: [],
+    };
+  }
   let title = "";
-  if (viteBrowser.page) {
-    try {
-      title = await viteBrowser.page.title();
-    } catch {}
+  if (state.page && !state.page.isClosed()) {
+    title = await withTimeout(state.page.title(), 600, "");
+  }
+  return {
+    active: Boolean(state.browser && state.page && !state.page.isClosed()),
+    url: state.url,
+    title,
+    startedAt: state.startedAt,
+    lastFrameAt: state.lastFrameAt,
+    lastDomAt: state.lastDomAt,
+    headless: state.headless,
+    logs: state.logs.slice(-16),
+  };
+};
+
+const viteBrowserStatus = async (sessionId = "") => {
+  const debugStatus = /^(1|true|yes)$/i.test(String(process.env.VLIX_DEBUG_BROWSER_STATUS || ""));
+  const startedAt = Date.now();
+  const mark = (label) => {
+    if (debugStatus) console.log(`[vite-status] ${label} ${Date.now()}`);
+  };
+  mark("start");
+  const state = remoteBrowserState(sessionId, { create: false });
+  const remote = await remoteBrowserPublicState(state);
+  mark("title");
+  const selectedBrowser = sessionId ? await selectedChatViteTarget(sessionId) : null;
+  mark("selected");
+  const detectedUrl = selectedBrowser?.targetUrl || "";
+  mark("detected");
+  const availableViteTargets = await livePreviewChoices(sessionId, selectedBrowser);
+  mark("available");
+  const mode = remote.active ? "preview" : "none";
+  let reason = sessionId ? "No Playwright Live Preview is running for this chat." : "No chat selected.";
+  if (remote.active) {
+    reason = "Playwright Live Preview is running for this chat.";
+  } else if (detectedUrl) {
+    reason = "Live Preview target found. Open preview to control it.";
+  } else if (sessionId) {
+    reason = "No Playwright target is tied to this chat yet.";
   }
   return {
     ok: true,
-    active: Boolean(viteBrowser.browser && viteBrowser.page),
-    url: viteBrowser.url,
-    title,
-    startedAt: viteBrowser.startedAt,
-    lastFrameAt: viteBrowser.lastFrameAt,
-    lastDomAt: viteBrowser.lastDomAt,
-    headless: viteBrowser.headless,
-    detectedUrl: await detectViteUrl(sessionId),
-    selectedBrowser: sessionId ? await selectedChatViteTarget(sessionId) : null,
-    availableViteTargets: await liveViteTargets(sessionId),
-    logs: viteBrowser.logs.slice(-16),
+    mode,
+    kind: mode === "preview" ? "playwright-live-preview" : "no-browser",
+    reason,
+    active: remote.active,
+    url: remote.url,
+    title: remote.title,
+    startedAt: remote.startedAt,
+    lastFrameAt: remote.lastFrameAt,
+    lastDomAt: remote.lastDomAt,
+    headless: remote.headless,
+    detectedUrl,
+    selectedBrowser,
+    codexIab: { active: false, reason: "Codex in-app browser mirroring is disabled for this UI path." },
+    availableViteTargets,
+    health: {
+      mode,
+      reason,
+      responseMs: Date.now() - startedAt,
+      selectedChatId: sessionId,
+      remoteKey: remoteBrowserKey(sessionId),
+    },
+    logs: remote.logs,
   };
 };
 
 const ensureViteBrowser = async (target, sessionId = "") => {
   const url = normalizeBrowserTarget(target || (await detectViteUrl(sessionId)));
+  if (isVlixBridgeOrigin(url)) throw new Error("Refusing to mirror the Vlix bridge into itself.");
+  if (await withTimeout(isVlixSelfViteTarget(url), 900, true)) {
+    throw new Error("Refusing to show the Vlix console inside Live Preview.");
+  }
+  const state = remoteBrowserState(sessionId);
   const { chromium } = require("playwright");
-  if (!viteBrowser.browser) {
+  if (!state.browser) {
     const visibleBrowser = /^(1|true|yes)$/i.test(String(process.env.VLIX_VISIBLE_BROWSER || ""));
-    viteBrowser.browser = await chromium.launch({
+    state.browser = await chromium.launch({
       headless: !visibleBrowser,
       args: visibleBrowser ? ["--window-size=1280,820"] : [],
     });
-    viteBrowser.headless = !visibleBrowser;
-    rememberViteBrowserLog({
+    state.headless = !visibleBrowser;
+    rememberViteBrowserLog(state, {
       type: "browser",
       level: "info",
-      text: visibleBrowser ? "Started visible mirror browser" : "Started headless mirror browser",
+      text: visibleBrowser ? "Started visible Playwright Live Preview" : "Started headless Playwright Live Preview",
     });
-    viteBrowser.startedAt = new Date().toISOString();
+    state.startedAt = new Date().toISOString();
   }
-  if (!viteBrowser.page || viteBrowser.page.isClosed()) {
-    viteBrowser.page = await viteBrowser.browser.newPage({ viewport: { width: 1280, height: 820 } });
-    attachViteBrowserPageEvents(viteBrowser.page);
+  if (!state.page || state.page.isClosed()) {
+    state.page = await state.browser.newPage({ viewport: { width: 1280, height: 820 } });
+    attachViteBrowserPageEvents(state, state.page);
   }
-  await viteBrowser.page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 });
-  viteBrowser.url = url;
-  rememberViteBrowserLog({ type: "browser", level: "info", text: `Opened ${url}` });
+  await state.page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 });
+  state.url = url;
+  rememberViteBrowserLog(state, { type: "browser", level: "info", text: `Opened ${url}` });
   return viteBrowserStatus(sessionId);
 };
 
-const requireVitePage = () => {
-  if (!viteBrowser.page) throw new Error("Start the Vite browser first.");
-  return viteBrowser.page;
+const requireVitePage = (sessionId = "") => {
+  const state = remoteBrowserState(sessionId, { create: false });
+  if (!state?.page || state.page.isClosed()) throw new Error("Start Playwright Live Preview first.");
+  return { state, page: state.page };
 };
 
-const captureViteDomSnapshot = async () => {
-  const page = requireVitePage();
+const captureViteDomSnapshot = async (sessionId = "") => {
+  const { state, page } = requireVitePage(sessionId);
   const snapshot = await page.evaluate(() => {
     const interactiveSelector = [
       "a[href]",
@@ -4238,12 +4902,13 @@ const captureViteDomSnapshot = async () => {
       html: `<!doctype html>\n${clone.outerHTML}`,
     };
   });
-  viteBrowser.lastDomAt = snapshot.capturedAt;
+  state.lastDomAt = snapshot.capturedAt;
   return snapshot;
 };
 
 const applyViteBrowserInput = async (input = {}) => {
-  const page = requireVitePage();
+  const chatId = input.chatId || "";
+  const { state, page } = requireVitePage(chatId);
   const type = String(input.type || "").trim();
   const viewport = page.viewportSize() || { width: 1280, height: 820 };
   const nodeId = String(input.nodeId || "").replace(/[^\w:-]/g, "");
@@ -4257,7 +4922,7 @@ const applyViteBrowserInput = async (input = {}) => {
           clickCount: Number(input.clickCount) || 1,
         });
         clickedNode = true;
-        rememberViteBrowserLog({ type: "input", level: "info", text: `Clicked DOM node ${nodeId}` });
+        rememberViteBrowserLog(state, { type: "input", level: "info", text: `Clicked DOM node ${nodeId}` });
       } catch {}
     }
     if (!clickedNode) {
@@ -4269,7 +4934,7 @@ const applyViteBrowserInput = async (input = {}) => {
         button: input.button === "right" ? "right" : "left",
         clickCount: Number(input.clickCount) || 1,
       });
-      rememberViteBrowserLog({ type: "input", level: "info", text: `Clicked ${x}, ${y}` });
+      rememberViteBrowserLog(state, { type: "input", level: "info", text: `Clicked ${x}, ${y}` });
     }
   } else if (type === "scroll") {
     if (nodeId) {
@@ -4278,7 +4943,7 @@ const applyViteBrowserInput = async (input = {}) => {
       } catch {}
     }
     await page.mouse.wheel(Number(input.deltaX) || 0, Number(input.deltaY) || 0);
-    rememberViteBrowserLog({
+    rememberViteBrowserLog(state, {
       type: "input",
       level: "info",
       text: `Scrolled ${Number(input.deltaX) || 0}, ${Number(input.deltaY) || 0}`,
@@ -4291,7 +4956,7 @@ const applyViteBrowserInput = async (input = {}) => {
       } catch {}
     }
     if (text) await page.keyboard.type(text, { delay: 8 });
-    rememberViteBrowserLog({ type: "input", level: "info", text: `Typed ${text.length} chars` });
+    rememberViteBrowserLog(state, { type: "input", level: "info", text: `Typed ${text.length} chars` });
   } else if (type === "press") {
     const key = String(input.key || "").trim();
     if (!key) throw new Error("Provide a key to press.");
@@ -4301,11 +4966,68 @@ const applyViteBrowserInput = async (input = {}) => {
       } catch {}
     }
     await page.keyboard.press(key);
-    rememberViteBrowserLog({ type: "input", level: "info", text: `Pressed ${key}` });
+    rememberViteBrowserLog(state, { type: "input", level: "info", text: `Pressed ${key}` });
   } else {
     throw new Error("Unsupported Vite browser input.");
   }
-  return viteBrowserStatus(input.chatId || "");
+  return viteBrowserStatus(chatId);
+};
+
+const handleCodexBrowserApi = async (req, res, reqUrl) => {
+  if (!isLoopbackRequest(req)) {
+    sendLocalApi(req, res, 403, {
+      error: "Real Codex browser attach is only available on this computer.",
+    });
+    return true;
+  }
+  if (req.headers.origin && !localApiCorsHeaders(req)) {
+    send(res, 403, { error: "Origin is not allowed for local browser control." });
+    return true;
+  }
+
+  const chatId = reqUrl.searchParams.get("chatId") || "";
+
+  if (req.method === "GET" && reqUrl.pathname === "/api/codex-browser/status") {
+    const codexIab = await safeCodexIabStatus(chatId);
+    const debug =
+      reqUrl.searchParams.get("debug") === "1"
+        ? await diagnoseCodexIabForSession(chatId, { deadlineMs: 4000, socketLimit: 16 })
+        : null;
+    sendLocalApi(req, res, 200, { ok: true, codexIab, debug });
+    return true;
+  }
+
+  if (req.method === "GET" && reqUrl.pathname === "/api/codex-browser/screenshot") {
+    try {
+      const { image, meta } = await captureCodexIabScreenshot(chatId);
+      const corsHeaders = localApiCorsHeaders(req) || {};
+      res.writeHead(200, {
+        "Cache-Control": "no-store",
+        "Content-Type": "image/jpeg",
+        "X-Vlix-Browser-Meta": Buffer.from(JSON.stringify(meta)).toString("base64"),
+        ...corsHeaders,
+      });
+      res.end(image);
+    } catch (error) {
+      sendLocalApi(req, res, 409, { error: error.message || "Real Codex browser is not ready." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && reqUrl.pathname === "/api/codex-browser/input") {
+    const body = await readBody(req);
+    try {
+      sendLocalApi(req, res, 200, {
+        ok: true,
+        codexIab: await applyCodexIabInput(body.chatId || chatId, body),
+      });
+    } catch (error) {
+      sendLocalApi(req, res, 409, { error: error.message || "Real browser input failed." });
+    }
+    return true;
+  }
+
+  return false;
 };
 
 const handleViteBrowserApi = async (req, res, reqUrl) => {
@@ -4326,13 +5048,19 @@ const handleViteBrowserApi = async (req, res, reqUrl) => {
   }
 
   if (req.method === "GET" && reqUrl.pathname === "/api/vite-browser/dom") {
-    if (!viteBrowser.page) {
-      sendLocalApi(req, res, 409, { error: "Start the Vite browser first." });
+    const chatId = reqUrl.searchParams.get("chatId") || "";
+    const state = remoteBrowserState(chatId, { create: false });
+    if (!state?.page || state.page.isClosed()) {
+      sendLocalApi(req, res, 409, {
+        error: "No Playwright Live Preview is running for this selected chat.",
+        mode: "none",
+        reason: "Open preview to start a per-chat Playwright browser.",
+      });
       return true;
     }
     try {
-      const status = await viteBrowserStatus(reqUrl.searchParams.get("chatId") || "");
-      const mirror = await captureViteDomSnapshot();
+      const status = await viteBrowserStatus(chatId);
+      const mirror = await captureViteDomSnapshot(chatId);
       sendLocalApi(req, res, 200, { ...status, mirror });
     } catch (error) {
       sendLocalApi(req, res, 500, { error: error.message || "DOM mirror failed." });
@@ -4343,13 +5071,21 @@ const handleViteBrowserApi = async (req, res, reqUrl) => {
   if (req.method === "POST" && reqUrl.pathname === "/api/vite-browser/start") {
     const body = await readBody(req);
     const chatId = body.chatId || "";
-    const target = body.url || (await detectViteUrl(chatId)) || (await liveViteTargets(chatId))[0]?.url;
+    const explicitTarget = body.url || "";
+    const target = explicitTarget || (await detectViteUrl(chatId));
     if (!target) {
+      const selectedBrowser = chatId ? await selectedChatViteTarget(chatId) : null;
+      const availableViteTargets = await livePreviewChoices(chatId, selectedBrowser);
       sendLocalApi(req, res, 409, {
         error: chatId
-          ? "The selected chat does not have a reachable Vite browser session."
+          ? "The selected chat does not have its own reachable browser target."
           : "No reachable Vite browser was detected.",
-        selectedBrowser: chatId ? await selectedChatViteTarget(chatId) : null,
+        selectedBrowser,
+        availableViteTargets,
+        mode: "none",
+        reason: chatId
+          ? "No Playwright target is tied to this chat yet."
+          : "No reachable local browser target was detected yet.",
       });
       return true;
     }
@@ -4360,14 +5096,23 @@ const handleViteBrowserApi = async (req, res, reqUrl) => {
   if (req.method === "POST" && reqUrl.pathname === "/api/vite-browser/reload") {
     const body = await readBody(req);
     const chatId = body.chatId || "";
-    if (!viteBrowser.page) {
-      const target = body.url || (await detectViteUrl(chatId)) || (await liveViteTargets(chatId))[0]?.url;
+    const state = remoteBrowserState(chatId, { create: false });
+    if (!state?.page || state.page.isClosed()) {
+      const explicitTarget = body.url || "";
+      const target = explicitTarget || (await detectViteUrl(chatId));
       if (!target) {
+        const selectedBrowser = chatId ? await selectedChatViteTarget(chatId) : null;
+        const availableViteTargets = await livePreviewChoices(chatId, selectedBrowser);
         sendLocalApi(req, res, 409, {
           error: chatId
-            ? "The selected chat does not have a reachable Vite browser session."
+            ? "The selected chat does not have its own reachable browser target."
             : "No reachable Vite browser was detected.",
-          selectedBrowser: chatId ? await selectedChatViteTarget(chatId) : null,
+          selectedBrowser,
+          availableViteTargets,
+          mode: "none",
+          reason: chatId
+            ? "No Playwright target is tied to this chat yet."
+            : "No reachable local browser target was detected yet.",
         });
         return true;
       }
@@ -4378,8 +5123,8 @@ const handleViteBrowserApi = async (req, res, reqUrl) => {
       sendLocalApi(req, res, 200, await ensureViteBrowser(body.url, chatId));
       return true;
     }
-    await viteBrowser.page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 });
-    rememberViteBrowserLog({ type: "browser", level: "info", text: "Reloaded Vite browser" });
+    await state.page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 });
+    rememberViteBrowserLog(state, { type: "browser", level: "info", text: "Reloaded Playwright Live Preview" });
     sendLocalApi(req, res, 200, await viteBrowserStatus(chatId));
     return true;
   }
@@ -4395,23 +5140,31 @@ const handleViteBrowserApi = async (req, res, reqUrl) => {
   }
 
   if (req.method === "POST" && reqUrl.pathname === "/api/vite-browser/stop") {
-    await closeViteBrowser();
-    sendLocalApi(req, res, 200, await viteBrowserStatus());
+    const body = await readBody(req);
+    const chatId = body.chatId || reqUrl.searchParams.get("chatId") || "";
+    await closeViteBrowser(chatId);
+    sendLocalApi(req, res, 200, await viteBrowserStatus(chatId));
     return true;
   }
 
   if (req.method === "GET" && reqUrl.pathname === "/api/vite-browser/screenshot") {
-    if (!viteBrowser.page) {
-      sendLocalApi(req, res, 409, { error: "Start the Vite browser first." });
+    const chatId = reqUrl.searchParams.get("chatId") || "";
+    const state = remoteBrowserState(chatId, { create: false });
+    if (!state?.page || state.page.isClosed()) {
+      sendLocalApi(req, res, 409, {
+        error: "No Playwright Live Preview is running for this selected chat.",
+        mode: "none",
+        reason: "Open preview to start a per-chat Playwright browser.",
+      });
       return true;
     }
     try {
-      const image = await viteBrowser.page.screenshot({
+      const image = await state.page.screenshot({
         type: "jpeg",
         quality: 62,
         fullPage: false,
       });
-      viteBrowser.lastFrameAt = new Date().toISOString();
+      state.lastFrameAt = new Date().toISOString();
       const corsHeaders = localApiCorsHeaders(req) || {};
       res.writeHead(200, {
         "Cache-Control": "no-store",
@@ -4485,6 +5238,10 @@ const routeApi = async (req, res, reqUrl) => {
 
   if (reqUrl.pathname.startsWith("/api/vite-browser/")) {
     return handleViteBrowserApi(req, res, reqUrl);
+  }
+
+  if (reqUrl.pathname.startsWith("/api/codex-browser/")) {
+    return handleCodexBrowserApi(req, res, reqUrl);
   }
 
   if (req.method === "GET" && reqUrl.pathname === "/api/app-version") {
@@ -5038,10 +5795,9 @@ const routeApi = async (req, res, reqUrl) => {
   }
 
   if (req.method === "GET" && reqUrl.pathname === "/api/tasks") {
-    const liveAccount = syncBridgeAccountFromCodex(account);
     send(res, 200, {
-      tasks: listActiveTasksForAccount(liveAccount),
-      account: publicBridgeAccount(liveAccount),
+      tasks: listActiveTasksForAccount(account),
+      account: publicBridgeAccount(account),
       appVersion: appAssetVersion(),
     });
     return true;

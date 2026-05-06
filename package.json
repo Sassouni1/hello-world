@@ -21,6 +21,8 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
+    "test:live-preview": "node desktop-bridge/scripts/three-chat-browser-test.cjs",
+    "test:browser-mirror": "npm run test:live-preview",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

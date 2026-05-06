@@ -64,6 +64,11 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "";
 const initialPairingCode =
   typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("pair") || "";
+const forceLandingPage =
+  typeof window !== "undefined" &&
+  ["1", "true", "yes"].includes(
+    (new URLSearchParams(window.location.search).get("landing") || "").toLowerCase(),
+  );
 const initialDesktopSetup =
   typeof window !== "undefined" &&
   (() => {
@@ -132,6 +137,7 @@ function Index() {
       (!activeAccount || localBridge?.cloud?.accountId === activeAccount.id)) ||
     Boolean(activeDevice);
   const shouldOfferLocalSync = desktopSetupRequested || Boolean(localBridge);
+  const shouldShowMirrorBoot = !forceLandingPage && !pairingCode && !user && shouldOfferLocalSync;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -752,6 +758,10 @@ function Index() {
     setViteText("");
   };
 
+  if (!forceLandingPage && !pairingCode && localBridge?.localUrl) {
+    return <LocalConsoleMirror localUrl={localBridge.localUrl} />;
+  }
+
   return (
     <main className="min-h-screen overflow-hidden bg-[#0f0f0f] text-[#f5f5f1]">
       <header className="flex items-center justify-between border-b border-white/10 px-5 py-4 sm:px-8">
@@ -782,16 +792,25 @@ function Index() {
       </header>
 
       {!user ? (
-        <SignedOut
-          busy={busy || pairingBusy}
-          copied={copied}
-          localBridge={localBridge}
-          localBridgeError={localBridgeError}
-          notice={notice}
-          shouldOfferLocalSync={shouldOfferLocalSync}
-          copyInstall={() => copyText("install", installCommand)}
-          startConsole={() => void signInAnonymously("Creating a private console...")}
-        />
+        shouldShowMirrorBoot ? (
+          <MirrorBoot
+            busy={busy || pairingBusy}
+            localBridge={localBridge}
+            notice={notice}
+            startConsole={() => void signInAnonymously("Creating a private console mirror...")}
+          />
+        ) : (
+          <SignedOut
+            busy={busy || pairingBusy}
+            copied={copied}
+            localBridge={localBridge}
+            localBridgeError={localBridgeError}
+            notice={notice}
+            shouldOfferLocalSync={shouldOfferLocalSync}
+            copyInstall={() => copyText("install", installCommand)}
+            startConsole={() => void signInAnonymously("Creating a private console...")}
+          />
+        )
       ) : (
         <section className="grid min-h-[calc(100vh-73px)] grid-cols-1 lg:grid-cols-[360px_1fr_420px]">
           <aside className="border-r border-white/10 bg-[#111]">
@@ -1178,6 +1197,70 @@ function Index() {
         </section>
       )}
     </main>
+  );
+}
+
+function LocalConsoleMirror({ localUrl }: { localUrl: string }) {
+  const mirrorUrl = new URL(localUrl);
+  if (typeof window !== "undefined") mirrorUrl.searchParams.set("mirrorOrigin", window.location.origin);
+  return (
+    <main className="h-screen overflow-hidden bg-black text-white">
+      <iframe
+        className="h-full w-full border-0"
+        src={mirrorUrl.toString()}
+        title="Vlix local console mirror"
+      />
+    </main>
+  );
+}
+
+function MirrorBoot({
+  busy,
+  localBridge,
+  notice,
+  startConsole,
+}: {
+  busy: boolean;
+  localBridge: LocalBridgeInfo | null;
+  notice: string;
+  startConsole: () => void;
+}) {
+  return (
+    <section className="grid min-h-[calc(100svh-73px)] place-items-center px-4 py-10">
+      <div className="w-full max-w-xl rounded-[2rem] border border-white/10 bg-[#141414] p-5 shadow-2xl shadow-black/35 sm:p-7">
+        <div className="flex items-center gap-3">
+          <div className="grid h-11 w-11 place-items-center rounded-2xl bg-gradient-to-br from-cyan-300 to-violet-500 font-semibold text-black">
+            V
+          </div>
+          <div>
+            <div className="text-lg font-semibold text-white">Vlix console mirror</div>
+            <div className="text-xs uppercase tracking-[0.22em] text-cyan-100/50">
+              Desktop bridge detected
+            </div>
+          </div>
+        </div>
+        <div className="mt-7 rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.06] p-4">
+          <div className="flex items-center gap-3 text-cyan-100">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span className="font-medium">Creating the private mirrored console...</span>
+          </div>
+          <p className="mt-3 text-sm leading-6 text-white/55">
+            The local bridge is running at {localBridge?.localUrl || localBridgeUrl}. This page is
+            switching into the console state instead of showing the sales page or redirecting to a
+            different localhost URL.
+          </p>
+        </div>
+        {notice && <p className="mt-4 text-sm text-white/50">{notice}</p>}
+        <Button
+          className="mt-5 h-12 w-full rounded-2xl bg-white text-black hover:bg-white/90"
+          disabled={busy}
+          onClick={startConsole}
+        >
+          {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <MonitorUp className="mr-2 h-4 w-4" />}
+          Open console mirror
+        </Button>
+      </div>
+    </section>
   );
 }
 

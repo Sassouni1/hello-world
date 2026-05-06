@@ -1646,6 +1646,19 @@ body.is-browser-view .browser-panel {
   box-shadow: 0 0 18px rgba(39, 216, 255, 0.7);
 }
 
+.browser-live-status.is-none {
+  color: #9f9f98;
+}
+
+.browser-live-status.is-error {
+  color: #ff8d8d;
+}
+
+.browser-live-status.is-preview::before {
+  background: #b58cff;
+  box-shadow: 0 0 18px rgba(181, 140, 255, 0.55);
+}
+
 .vite-targets {
   display: flex;
   flex-wrap: wrap;
@@ -1709,11 +1722,17 @@ body.is-browser-view .browser-panel {
   display: block;
 }
 
+.preview-frame iframe[hidden],
+.preview-frame img[hidden] {
+  display: none !important;
+}
+
 .preview-frame img {
   width: 100%;
   height: 100%;
   border: 0;
   object-fit: contain;
+  object-position: top center;
   display: block;
   user-select: none;
   -webkit-user-drag: none;
